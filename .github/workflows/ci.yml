@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: fmt
+        run: test -z $(gofmt -l . | head -n 1) || ( gofmt -d . ; exit 1 )
+
+      - name: vet
+        run: go vet ./...
+
+      - name: build
+        run: go build ./...
+
+      - name: install plugins
+        run: go install ./cmd/...
+
+      - name: test
+        run: go test -race ./...
+
+      - uses: dominikh/staticcheck-action@v1
+        with:
+          version: '2025.1.1'
+          install-go: false
+
+  python:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+
+      - name: install
+        working-directory: python
+        run: uv sync --all-extras
+
+      - name: test
+        working-directory: python
+        run: uv run pytest

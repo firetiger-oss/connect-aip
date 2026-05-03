@@ -1,0 +1,47 @@
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Coverage profiles
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+
+# Emacs
+*~
+
+# GoReleaser
+dist/
+
+# Local cmd binary builds (use go install instead of go build at repo root)
+/protoc-gen-aip-go
+/protoc-gen-aip-ts
+/protoc-gen-aip-py
+
+# Python build
+python/dist/
+python/build/
+python/*.egg-info/
+python/.pytest_cache/
+**/__pycache__/
+**/*.pyc
+
+# Local Claude Code state (committed skills live under .claude/skills/)
+.claude/settings.local.json

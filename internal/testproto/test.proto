@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package connectaip.test.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "github.com/firetiger-oss/connect-aip/internal/testproto/testv1;testv1";
+
+// TestService exercises every shape the runtime + codegen care about:
+// Create (POST + body=*), Get (GET + path var), Update (PATCH + nested body),
+// List (GET + query params), ListVersions (GET + path var with custom verb suffix),
+// and a server-streaming method (POST → SSE).
+service TestService {
+  rpc CreateResource(CreateResourceRequest) returns (CreateResourceResponse) {
+    option (google.api.http) = {
+      post: "/v1/resources"
+      body: "*"
+    };
+  }
+
+  rpc GetResource(GetResourceRequest) returns (GetResourceResponse) {
+    option (google.api.http) = {
+      get: "/v1/{name=resources/*}"
+    };
+  }
+
+  rpc UpdateResource(UpdateResourceRequest) returns (UpdateResourceResponse) {
+    option (google.api.http) = {
+      patch: "/v1/{resource.name=resources/*}"
+      body: "*"
+    };
+  }
+
+  rpc ListResources(ListResourcesRequest) returns (ListResourcesResponse) {
+    option (google.api.http) = {
+      get: "/v1/resources"
+    };
+  }
+
+  rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse) {
+    option (google.api.http) = {
+      get: "/v1/{name=resources/*}/versions"
+    };
+  }
+
+  // Server-streaming method used to validate the SSE handler path.
+  rpc StreamResources(CreateResourceRequest) returns (stream CreateResourceResponse) {
+    option (google.api.http) = {
+      post: "/v1/resources:stream"
+      body: "*"
+    };
+  }
+}
+
+message Resource {
+  string name = 1;
+  string description = 2;
+}
+
+message CreateResourceRequest {
+  string resource_id = 1;
+  Resource resource = 2;
+}
+
+message CreateResourceResponse {
+  Resource resource = 1;
+}
+
+message GetResourceRequest {
+  string name = 1;
+}
+
+message GetResourceResponse {
+  Resource resource = 1;
+}
+
+message UpdateResourceRequest {
+  Resource resource = 1;
+}
+
+message UpdateResourceResponse {
+  Resource resource = 1;
+}
+
+message ListResourcesRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+  string filter = 3;
+  string order_by = 4;
+}
+
+message ListResourcesResponse {
+  repeated Resource resources = 1;
+  string next_page_token = 2;
+}
+
+message ListVersionsRequest {
+  string name = 1;
+  string page_token = 2;
+}
+
+message ListVersionsResponse {
+}

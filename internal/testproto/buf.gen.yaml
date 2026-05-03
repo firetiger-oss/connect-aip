@@ -1,0 +1,27 @@
+version: v2
+
+managed:
+  enabled: true
+  disable:
+    - file_option: go_package
+      module: buf.build/googleapis/googleapis
+
+inputs:
+  - directory: .
+
+plugins:
+  - remote: buf.build/protocolbuffers/go:v1.36.10
+    out: testv1
+    opt:
+      - paths=source_relative
+
+  - remote: buf.build/connectrpc/go:v1.19.1
+    out: testv1
+    opt:
+      - paths=source_relative
+
+  - local: protoc-gen-aip-go
+    out: testv1
+    opt:
+      - paths=source_relative
+    strategy: all
