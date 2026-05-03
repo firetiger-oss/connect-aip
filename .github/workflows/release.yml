@@ -37,6 +37,9 @@ jobs:
     permissions:
       # OIDC token for PyPI Trusted Publishers
       id-token: write
+      # Required to clone the repo (job-level `permissions:` replaces the
+      # workflow-level block entirely, not augments it)
+      contents: read
 
     steps:
       - uses: actions/checkout@v6
