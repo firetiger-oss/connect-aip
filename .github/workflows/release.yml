@@ -40,3 +40,38 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pypi:
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/connectaip/
+
+    permissions:
+      # OIDC token for PyPI Trusted Publishers
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+
+      - name: Verify tag matches python/pyproject.toml version
+        run: |
+          tag="${GITHUB_REF##*/v}"
+          pkg_version=$(grep -E '^version = ' python/pyproject.toml | sed -E 's/version = "(.+)"/\1/')
+          if [ "$tag" != "$pkg_version" ]; then
+            echo "::error::Git tag v$tag does not match python/pyproject.toml version $pkg_version"
+            exit 1
+          fi
+
+      - name: Build sdist + wheel
+        working-directory: python
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python/dist
