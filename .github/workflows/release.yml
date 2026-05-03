@@ -11,6 +11,10 @@ permissions:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+
+    env:
+      GOPRIVATE: github.com/firetiger-oss/*
+
     steps:
       - uses: actions/checkout@v6
         with:
@@ -19,6 +23,16 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+
+      - name: Configure git for private firetiger-oss modules
+        env:
+          FIRETIGER_OSS_PAT: ${{ secrets.FIRETIGER_OSS_PAT }}
+        run: |
+          if [ -n "$FIRETIGER_OSS_PAT" ]; then
+            git config --global url."https://x-access-token:${FIRETIGER_OSS_PAT}@github.com/firetiger-oss/".insteadOf "https://github.com/firetiger-oss/"
+          else
+            echo "::warning::FIRETIGER_OSS_PAT secret not set; private firetiger-oss/* go.mod fetches will fail until it is configured."
+          fi
 
       - uses: goreleaser/goreleaser-action@v6
         with:
