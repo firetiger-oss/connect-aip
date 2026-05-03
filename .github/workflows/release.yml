@@ -43,19 +43,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v6
         with:
           version: latest
-
-      - name: Verify tag matches python/pyproject.toml version
-        run: |
-          tag="${GITHUB_REF##*/v}"
-          pkg_version=$(grep -E '^version = ' python/pyproject.toml | sed -E 's/version = "(.+)"/\1/')
-          if [ "$tag" != "$pkg_version" ]; then
-            echo "::error::Git tag v$tag does not match python/pyproject.toml version $pkg_version"
-            exit 1
-          fi
 
       - name: Build sdist + wheel
         working-directory: python

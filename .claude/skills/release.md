@@ -33,20 +33,19 @@ Once the project exists on PyPI (after the first release succeeds), the "pending
    - **Major**: emitted Go/TS/Py code changes shape (consumers must regenerate AND adjust their code), runtime breaks API, wire format changes.
    - **Minor**: new features, additional emitted symbols (regenerating works without manual changes).
    - **Patch**: bug fixes that don't change emitted output structure.
-3. **Bump `python/pyproject.toml` version to match the tag** (the workflow asserts `version = "X.Y.Z"` matches the `vX.Y.Z` tag and refuses to publish on mismatch). Commit the bump.
-4. Tag and push:
+3. Tag and push. **The git tag is the version source of truth** — `python/pyproject.toml` uses `hatch-vcs` to read the tag at build time, so no file edit is needed:
    ```bash
    git checkout main && git pull
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
-5. Watch the release workflow. Two jobs run in parallel:
+4. Watch the release workflow. Two jobs run in parallel:
    ```bash
    gh run watch $(gh run list --workflow=release.yml --limit=1 --json databaseId --jq '.[0].databaseId')
    ```
    - `goreleaser`: builds and attaches 12 binary archives + checksums to the GitHub Release.
    - `pypi`: builds sdist + wheel and publishes to PyPI via OIDC.
-6. Verify:
+5. Verify:
    - GitHub Releases page should have 12 archives + `checksums.txt`.
    - https://pypi.org/project/connectaip/X.Y.Z/ should be live within ~1 minute.
    - Smoke test:
