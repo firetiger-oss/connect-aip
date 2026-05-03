@@ -23,15 +23,6 @@ PyPI publishing uses [Trusted Publishers (OIDC)](https://docs.pypi.org/trusted-p
 
 Once the project exists on PyPI (after the first release succeeds), the "pending" publisher converts into a regular Trusted Publisher and subsequent releases require no further action.
 
-### `FIRETIGER_OSS_PAT` (only while connect-sse is private)
-
-The Go test + release jobs need to fetch `github.com/firetiger-oss/connect-sse` via go modules. While that repo is private, Settings → Secrets and variables → Actions → New repository secret:
-
-- Name: `FIRETIGER_OSS_PAT`
-- Value: a fine-grained PAT with `Contents: Read-only` on `firetiger-oss/connect-sse` (and `firetiger-oss/connect-aip` if needed for self-fetch).
-
-Once both repos go public, the secret + the `Configure git for private firetiger-oss modules` step in the workflows can be deleted.
-
 ## Per-release flow
 
 1. Confirm CI is green on `main`:
