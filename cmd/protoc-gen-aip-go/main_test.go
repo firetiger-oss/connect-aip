@@ -77,7 +77,9 @@ func TestUnaryHandlersUseConnectaipForward(t *testing.T) {
 // TestClientImplementsStandardInterface verifies the AIP client constructor
 // returns the standard {Service}Client interface (not a separate AIP-specific
 // interface), and that unary methods take *connect.Request[T] and return
-// *connect.Response[T] so the impl satisfies the standard interface.
+// *connect.Response[T] so the impl satisfies the standard interface. It also
+// verifies that the AIP type name is still exported (as an alias) so existing
+// downstream code that types variables as {Service}AIPClient keeps compiling.
 func TestClientImplementsStandardInterface(t *testing.T) {
 	content := readFixture(t)
 
@@ -85,6 +87,11 @@ func TestClientImplementsStandardInterface(t *testing.T) {
 		`func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) TestServiceClient`,
 		`func (c *testServiceAIPClient) CreateResource(ctx context.Context, req *connect.Request[testv1.CreateResourceRequest]) (*connect.Response[testv1.CreateResourceResponse], error)`,
 		`return c.createResource.CallRequest(ctx, req)`,
+		// The AIP type name is preserved as an alias so existing code keeps
+		// compiling after regeneration.
+		`type TestServiceAIPClient = TestServiceClient`,
+		// Procedure must propagate so unary interceptors can identify the RPC.
+		`Procedure:  TestServiceCreateResourceProcedure,`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("fixture missing %q — AIP client must satisfy the standard {Service}Client interface", want)

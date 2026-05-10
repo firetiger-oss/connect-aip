@@ -97,6 +97,12 @@ func handleTestServiceDeleteResource(connectHandler http.Handler) http.Handler {
 	})
 }
 
+// TestServiceAIPClient is an alias for the standard TestServiceClient interface.
+// All RPCs on TestService have HTTP rules, so the AIP client is a
+// drop-in replacement for TestServiceClient; this alias is kept for
+// backwards compatibility with code that types variables as TestServiceAIPClient.
+type TestServiceAIPClient = TestServiceClient
+
 type testServiceAIPClient struct {
 	createResource  *connectaip.Client[testv1.CreateResourceRequest, testv1.CreateResourceResponse]
 	getResource     *connectaip.Client[testv1.GetResourceRequest, testv1.GetResourceResponse]
@@ -117,6 +123,7 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 			connectaip.MethodSpec{
 				HTTPMethod: "POST",
 				URLPattern: "/v1/resources",
+				Procedure:  TestServiceCreateResourceProcedure,
 			},
 			nil,
 			nil,
@@ -127,6 +134,7 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 			connectaip.MethodSpec{
 				HTTPMethod: "GET",
 				URLPattern: "/v1/resources/{name}",
+				Procedure:  TestServiceGetResourceProcedure,
 				PathVars: []connectaip.PathVar{
 					{Placeholder: "{name}", Prefix: "resources/"},
 				},
@@ -140,6 +148,7 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 			connectaip.MethodSpec{
 				HTTPMethod: "PATCH",
 				URLPattern: "/v1/resources/{name}",
+				Procedure:  TestServiceUpdateResourceProcedure,
 				PathVars: []connectaip.PathVar{
 					{Placeholder: "{name}", Prefix: "resources/"},
 				},
@@ -153,6 +162,7 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 			connectaip.MethodSpec{
 				HTTPMethod: "GET",
 				URLPattern: "/v1/resources",
+				Procedure:  TestServiceListResourcesProcedure,
 			},
 			nil,
 			TestServiceListResourcesQuery,
@@ -163,6 +173,7 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 			connectaip.MethodSpec{
 				HTTPMethod: "GET",
 				URLPattern: "/v1/resources/{name}/versions",
+				Procedure:  TestServiceListVersionsProcedure,
 				PathVars: []connectaip.PathVar{
 					{Placeholder: "{name}", Prefix: "resources/"},
 				},
@@ -181,6 +192,7 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 			connectaip.MethodSpec{
 				HTTPMethod: "DELETE",
 				URLPattern: "/v1/resources/{name}",
+				Procedure:  TestServiceDeleteResourceProcedure,
 				PathVars: []connectaip.PathVar{
 					{Placeholder: "{name}", Prefix: "resources/"},
 				},
@@ -314,6 +326,7 @@ func NewMixedCoverageServiceAIPClient(httpClient connect.HTTPClient, baseURL str
 			connectaip.MethodSpec{
 				HTTPMethod: "GET",
 				URLPattern: "/v1/mixed/resources/{name}",
+				Procedure:  MixedCoverageServiceAnnotatedMethodProcedure,
 				PathVars: []connectaip.PathVar{
 					{Placeholder: "{name}", Prefix: "resources/"},
 				},

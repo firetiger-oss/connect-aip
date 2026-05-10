@@ -105,7 +105,7 @@ type interceptorTransport struct {
 
 func (t *interceptorTransport) Do(req *http.Request) (*http.Response, error) {
 	connectReq := connect.NewRequest[struct{}](nil)
-	setRequestIsClient(connectReq)
+	setRequestSpec(connectReq, "")
 	for k, vs := range req.Header {
 		for _, v := range vs {
 			connectReq.Header().Add(k, v)
@@ -182,6 +182,10 @@ type MethodSpec struct {
 	HTTPMethod string    // GET, POST, PATCH, DELETE, PUT
 	URLPattern string    // e.g., "/v1/credentials/{name}"
 	PathVars   []PathVar // path variable extraction info
+	// Procedure is the Connect RPC procedure URL for this method
+	// (e.g. "/example.v1.Service/Method"). When set, it populates
+	// req.Spec().Procedure so unary interceptors can identify the RPC.
+	Procedure string
 }
 
 // PathVar describes how to extract a path variable from a request.
@@ -240,7 +244,7 @@ func (c *Client[Req, Resp]) Call(ctx context.Context, req *Req) (*Resp, error) {
 // per-call headers from connectReq override them. Interceptors registered via
 // WithInterceptors run with full visibility into the connect.Request.
 func (c *Client[Req, Resp]) CallRequest(ctx context.Context, connectReq *connect.Request[Req]) (*connect.Response[Resp], error) {
-	setRequestIsClient(connectReq)
+	setRequestSpec(connectReq, c.spec.Procedure)
 	req := connectReq.Msg
 
 	urlPath := c.spec.URLPattern
@@ -348,10 +352,12 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
-// setRequestIsClient sets Spec().IsClient = true on a connect.Request via unsafe
-// access to the unexported spec field, so interceptors that check IsClient
-// (like NewM2MAuthInterceptor) correctly identify REST client requests.
-func setRequestIsClient[T any](req *connect.Request[T]) {
+// setRequestSpec populates Spec().IsClient = true and Spec().Procedure on a
+// connect.Request via unsafe access to the unexported spec field. IsClient
+// lets interceptors that branch on it (like NewM2MAuthInterceptor) correctly
+// identify REST client requests; Procedure lets them identify the RPC method,
+// matching the behaviour of a connect-go-generated client.
+func setRequestSpec[T any](req *connect.Request[T], procedure string) {
 	rv := reflect.ValueOf(req).Elem()
 	specField := rv.FieldByName("spec")
 	if !specField.IsValid() {
@@ -359,6 +365,9 @@ func setRequestIsClient[T any](req *connect.Request[T]) {
 	}
 	spec := (*connect.Spec)(unsafe.Pointer(specField.UnsafeAddr()))
 	spec.IsClient = true
+	if procedure != "" {
+		spec.Procedure = procedure
+	}
 }
 
 func doHTTPCall[Resp any](httpClient connect.HTTPClient, httpReq *http.Request) (*Resp, http.Header, http.Header, error) {

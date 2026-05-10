@@ -10,6 +10,13 @@ import (
 // standard interface fails the build if signatures drift.
 var _ TestServiceClient = NewTestServiceAIPClient(http.DefaultClient, "http://example.test")
 
+// For fully-covered services, TestServiceAIPClient is a type alias for
+// TestServiceClient so existing downstream code that uses the AIP type name
+// keeps compiling after regeneration. Both directions of assignment must work.
+var _ TestServiceAIPClient = NewTestServiceAIPClient(http.DefaultClient, "http://example.test")
+var _ TestServiceClient = (TestServiceAIPClient)(nil)
+var _ TestServiceAIPClient = (TestServiceClient)(nil)
+
 // MixedCoverageService has an RPC without an HTTP rule, so the AIP client
 // only covers a subset of the standard interface. The constructor must
 // instead return the service-scoped MixedCoverageServiceAIPClient interface,

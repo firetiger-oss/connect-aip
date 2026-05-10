@@ -310,6 +310,49 @@ func TestClientInterceptorSeesIsClient(t *testing.T) {
 	}
 }
 
+// TestClientInterceptorSeesProcedure verifies that a unary interceptor sees
+// req.Spec().Procedure set to the configured method procedure URL — the same
+// behaviour as a connect-go-generated client. Procedure-aware interceptors
+// (auth scoping, logging, metrics) need this to identify which RPC is being
+// dispatched.
+func TestClientInterceptorSeesProcedure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(testResponse{ID: "ok"})
+	}))
+	defer server.Close()
+
+	var sawProcedure string
+	interceptor := connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
+		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+			sawProcedure = req.Spec().Procedure
+			return next(ctx, req)
+		}
+	})
+
+	const procedure = "/example.v1.ItemService/GetItem"
+	client := NewClient[testRequest, testResponse](
+		server.Client(),
+		server.URL,
+		MethodSpec{
+			HTTPMethod: "GET",
+			URLPattern: "/v1/items",
+			Procedure:  procedure,
+		},
+		nil,
+		nil,
+		WithInterceptors(interceptor),
+	)
+
+	_, err := client.Call(t.Context(), &testRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sawProcedure != procedure {
+		t.Errorf("interceptor saw Spec().Procedure=%q, want %q", sawProcedure, procedure)
+	}
+}
+
 func TestClientWithMultipleInterceptors(t *testing.T) {
 	var gotHeaders http.Header
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

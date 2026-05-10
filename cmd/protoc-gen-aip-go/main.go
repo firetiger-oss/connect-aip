@@ -1118,13 +1118,24 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 	// When every RPC on the service has a usable HTTP rule, the AIP client
 	// is a complete implementation of the standard {Service}Client interface
 	// emitted by protoc-gen-connect-go and we return that directly so callers
-	// can use it as a drop-in replacement. When some RPCs are filtered out
-	// (gRPC-only, client-streaming, unsupported path params), we fall back to
-	// emitting an AIP-specific interface so the generated file still compiles
-	// — partial coverage cannot satisfy the standard interface.
+	// can use it as a drop-in replacement. We also emit `type {Service}AIPClient =
+	// {Service}Client` so existing downstream code that types variables as
+	// {Service}AIPClient keeps compiling after regeneration.
+	//
+	// When some RPCs are filtered out (gRPC-only, client-streaming, unsupported
+	// path params), we fall back to emitting an AIP-specific interface so the
+	// generated file still compiles — partial coverage cannot satisfy the
+	// standard interface.
 	allMethodsCovered := len(routes) == len(service.Methods)
 	clientInterface := serviceName + "Client"
-	if !allMethodsCovered {
+	if allMethodsCovered {
+		g.P("// ", clientName, " is an alias for the standard ", clientInterface, " interface.")
+		g.P("// All RPCs on ", serviceName, " have HTTP rules, so the AIP client is a")
+		g.P("// drop-in replacement for ", clientInterface, "; this alias is kept for")
+		g.P("// backwards compatibility with code that types variables as ", clientName, ".")
+		g.P("type ", clientName, " = ", clientInterface)
+		g.P()
+	} else {
 		clientInterface = clientName
 		g.P("// ", clientName, " is an AIP client for ", serviceName, ".")
 		g.P("// ", serviceName, " has RPCs without HTTP rules; use the connect-go-generated")
@@ -1193,6 +1204,7 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 			g.P("\t\t\tconnectaip.MethodSpec{")
 			g.P("\t\t\t\tHTTPMethod: \"", route.method, "\",")
 			g.P("\t\t\t\tURLPattern: \"", route.serveMuxPath+route.customVerb, "\",")
+			g.P("\t\t\t\tProcedure:  ", procedureConst, ",")
 			if len(route.pathVars) > 0 {
 				g.P("\t\t\t\tPathVars: []connectaip.PathVar{")
 				for _, pv := range route.pathVars {
