@@ -155,10 +155,14 @@ type pathVar struct {
 // Well-known types (proto file path under `google/protobuf/`) come in via
 // `from google.protobuf import <basename>_pb2` and are referenced as
 // `<basename>_pb2.X`. Any other cross-file type is imported as
-// `import <module>_pb2 as <alias>` (alias starts at `<basename>_pb2` and is
-// uniquified across both WKT base names and other non-local sources, so two
-// deps that share a basename — including a custom `empty.proto` alongside
-// `google.protobuf.Empty` — each get a distinct identifier).
+// `import <module>_pb2 as <alias>`.
+//
+// Alias assignment is deferred to the first call to importLines or
+// resolveSource so it doesn't depend on registration order: WKTs always claim
+// their canonical `<basename>_pb2` identifier first, then non-WKT sources are
+// assigned in source-path order, with conflicts resolved by appending
+// `_<n>`. This means a custom `empty.proto` registered before
+// `google/protobuf/empty.proto` still gets renamed.
 type pyTypeResolver struct {
 	currentFile string
 
@@ -167,15 +171,14 @@ type pyTypeResolver struct {
 	// <name>_pb2` line, naming `<name>_pb2` in the file scope.
 	wktBaseNames map[string]struct{}
 
-	// otherFiles maps a non-local, non-WKT proto file path to its chosen
-	// Python module alias (e.g. "other_pb2"). Aliases are uniquified across
-	// `pb2`, every `<wkt_base>_pb2`, and every other non-local source.
-	otherFiles map[string]string
+	// nonLocalSources is the deduplicated list of non-local non-WKT proto
+	// file paths needing import. Aliases are assigned lazily.
+	nonLocalSources []string
+	nonLocalSet     map[string]struct{}
 
-	// usedAliases tracks taken module identifiers in the generated file.
-	// Pre-seeded with "pb2" since the always-emitted local `import ... as pb2`
-	// claims it; WKT base names are added on registration.
-	usedAliases map[string]struct{}
+	// aliases caches the source→alias map computed by ensureAliases. Reset to
+	// nil whenever a new source is registered.
+	aliases map[string]string
 }
 
 func newPyTypeResolver(file *protogen.File) *pyTypeResolver {
@@ -186,8 +189,7 @@ func newPyTypeResolverForPath(currentFile string) *pyTypeResolver {
 	return &pyTypeResolver{
 		currentFile:  currentFile,
 		wktBaseNames: map[string]struct{}{},
-		otherFiles:   map[string]string{},
-		usedAliases:  map[string]struct{}{"pb2": {}},
+		nonLocalSet:  map[string]struct{}{},
 	}
 }
 
@@ -199,30 +201,50 @@ func (r *pyTypeResolver) registerSource(source, _ string) {
 	if source == r.currentFile {
 		return
 	}
-	base := strings.TrimSuffix(source[strings.LastIndex(source, "/")+1:], ".proto")
 	if isWellKnownProtoFile(source) {
+		base := strings.TrimSuffix(source[strings.LastIndex(source, "/")+1:], ".proto")
 		if _, ok := r.wktBaseNames[base]; ok {
 			return
 		}
 		r.wktBaseNames[base] = struct{}{}
-		// WKT names are fixed by Python convention (`from google.protobuf
-		// import <base>_pb2`) — no renaming. Reserve the identifier so a
-		// later non-WKT source with the same basename gets a unique alias.
-		r.usedAliases[base+"_pb2"] = struct{}{}
+		r.aliases = nil
 		return
 	}
-	if _, ok := r.otherFiles[source]; ok {
+	if _, ok := r.nonLocalSet[source]; ok {
 		return
 	}
-	alias := base + "_pb2"
-	for n := 1; ; n++ {
-		if _, taken := r.usedAliases[alias]; !taken {
-			break
+	r.nonLocalSet[source] = struct{}{}
+	r.nonLocalSources = append(r.nonLocalSources, source)
+	r.aliases = nil
+}
+
+// ensureAliases assigns a unique alias to every registered non-WKT source,
+// reserving `pb2` (the local module) and `<wkt_base>_pb2` for each WKT first.
+// Aliases are computed once and cached; any new registration invalidates the
+// cache.
+func (r *pyTypeResolver) ensureAliases() {
+	if r.aliases != nil {
+		return
+	}
+	used := map[string]struct{}{"pb2": {}}
+	for base := range r.wktBaseNames {
+		used[base+"_pb2"] = struct{}{}
+	}
+	sorted := append([]string(nil), r.nonLocalSources...)
+	sort.Strings(sorted)
+	r.aliases = make(map[string]string, len(sorted))
+	for _, source := range sorted {
+		base := strings.TrimSuffix(source[strings.LastIndex(source, "/")+1:], ".proto")
+		alias := base + "_pb2"
+		for n := 1; ; n++ {
+			if _, taken := used[alias]; !taken {
+				break
+			}
+			alias = fmt.Sprintf("%s_pb2_%d", base, n)
 		}
-		alias = fmt.Sprintf("%s_pb2_%d", base, n)
+		r.aliases[source] = alias
+		used[alias] = struct{}{}
 	}
-	r.otherFiles[source] = alias
-	r.usedAliases[alias] = struct{}{}
 }
 
 func (r *pyTypeResolver) resolve(msg *protogen.Message) string {
@@ -237,12 +259,14 @@ func (r *pyTypeResolver) resolveSource(source, name string) string {
 	if isWellKnownProtoFile(source) {
 		return base + "_pb2." + name
 	}
-	return r.otherFiles[source] + "." + name
+	r.ensureAliases()
+	return r.aliases[source] + "." + name
 }
 
 // importLines returns extra `import` statements (excluding the always-present
 // local `import <pythonPath>_pb2 as pb2`), sorted by source for stable output.
 func (r *pyTypeResolver) importLines() []string {
+	r.ensureAliases()
 	var lines []string
 	wktBases := make([]string, 0, len(r.wktBaseNames))
 	for b := range r.wktBaseNames {
@@ -252,13 +276,10 @@ func (r *pyTypeResolver) importLines() []string {
 	for _, b := range wktBases {
 		lines = append(lines, fmt.Sprintf("from google.protobuf import %s_pb2", b))
 	}
-	sources := make([]string, 0, len(r.otherFiles))
-	for s := range r.otherFiles {
-		sources = append(sources, s)
-	}
+	sources := append([]string(nil), r.nonLocalSources...)
 	sort.Strings(sources)
 	for _, source := range sources {
-		alias := r.otherFiles[source]
+		alias := r.aliases[source]
 		modulePath := strings.ReplaceAll(strings.TrimSuffix(source, ".proto"), "/", ".")
 		lines = append(lines, fmt.Sprintf("import %s_pb2 as %s", modulePath, alias))
 	}

@@ -1070,6 +1070,15 @@ func parseURLPatternToServeMux(pattern string) ([]pathVar, string, string, bool)
 // emptypb.Empty for google.protobuf.Empty), it delegates to g.QualifiedGoIdent
 // which registers the import automatically (protogen prepends a separate import
 // block for these — valid Go, just two import blocks in the file).
+//
+// Known limitation: protogen's automatic import resolution does not see names
+// claimed by the manual import block (`pkgAlias`, `connectaip`, `connect`,
+// `connectsse`). If a generated file's local pkgAlias literally matches a
+// cross-package alias protogen would assign — e.g., a proto with
+// `option go_package = "..../emptypb;emptypb"` returning `google.protobuf.Empty`
+// — the file ends up with two `emptypb` imports and won't compile. Avoiding
+// this would require switching the file to use protogen-managed imports for
+// everything (no manual `import (...)` block); deferred to a follow-up.
 func qualifiedTypeName(g *protogen.GeneratedFile, ident protogen.GoIdent, pkgAlias, protoImportPath string) string {
 	if string(ident.GoImportPath) == protoImportPath {
 		return pkgAlias + "." + ident.GoName

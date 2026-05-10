@@ -2,6 +2,7 @@ package main
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -70,16 +71,19 @@ func TestPyTypeResolverAliasUniqueness(t *testing.T) {
 	if fooType == barType {
 		t.Errorf("foo and bar resolved to the same expression %q — basename collision regressed", fooType)
 	}
-	if fooType != "common_pb2.FooThing" {
-		t.Errorf("foo type = %q; want common_pb2.FooThing", fooType)
+	// Aliases are assigned in source-path-sorted order to be order-independent
+	// (bar/v1/common.proto sorts before foo/v1/common.proto), so bar claims
+	// the canonical `common_pb2` and foo gets renamed.
+	if barType != "common_pb2.BarThing" {
+		t.Errorf("bar type = %q; want common_pb2.BarThing", barType)
 	}
-	if barType != "common_pb2_1.BarThing" {
-		t.Errorf("bar type = %q; want common_pb2_1.BarThing", barType)
+	if fooType != "common_pb2_1.FooThing" {
+		t.Errorf("foo type = %q; want common_pb2_1.FooThing", fooType)
 	}
 
 	wantImports := []string{
-		`import bar.v1.common_pb2 as common_pb2_1`,
-		`import foo.v1.common_pb2 as common_pb2`,
+		`import bar.v1.common_pb2 as common_pb2`,
+		`import foo.v1.common_pb2 as common_pb2_1`,
 	}
 	if got := r.importLines(); !slices.Equal(got, wantImports) {
 		t.Errorf("importLines() = %q; want %q", got, wantImports)
@@ -117,5 +121,56 @@ func TestPyTypeResolverWKTCollidesWithCustomProto(t *testing.T) {
 	}
 	if got := r.importLines(); !slices.Equal(got, wantImports) {
 		t.Errorf("importLines() = %q; want %q", got, wantImports)
+	}
+}
+
+// TestPyTypeResolverWKTCollisionOrderIndependent pins codex review round 2 [P2]:
+// the WKT-vs-custom collision fix must work regardless of registration order.
+// If the non-WKT custom/v1/empty.proto is registered FIRST, the prior fix would
+// claim `empty_pb2` for the custom proto, then the WKT registration would also
+// take the canonical `empty_pb2` and the generated file would have two
+// `empty_pb2` identifiers. The custom proto must be renamed even when it
+// registers first.
+func TestPyTypeResolverWKTCollisionOrderIndependent(t *testing.T) {
+	const localFile = "myapp/v1/svc.proto"
+
+	r := newPyTypeResolverForPath(localFile)
+	// Register non-WKT first — the bug-prone order.
+	r.registerSource("custom/v1/empty.proto", "CustomEmpty")
+	r.registerSource("google/protobuf/empty.proto", "Empty")
+
+	wktType := r.resolveSource("google/protobuf/empty.proto", "Empty")
+	customType := r.resolveSource("custom/v1/empty.proto", "CustomEmpty")
+
+	if wktType != "empty_pb2.Empty" {
+		t.Errorf("WKT Empty resolved to %q; want empty_pb2.Empty", wktType)
+	}
+	if customType == wktType {
+		t.Errorf("custom Empty collapsed onto the WKT identifier %q — order-dependent collision regressed", customType)
+	}
+
+	got := r.importLines()
+	// Build a set of identifiers actually consumed in the import lines and
+	// assert no duplicates. (Don't pin the exact alias name for the custom
+	// proto — only that it differs from the WKT.)
+	seen := make(map[string]int)
+	for _, line := range got {
+		// `from google.protobuf import empty_pb2` → identifier `empty_pb2`
+		// `import custom.v1.empty_pb2 as empty_pb2_X` → identifier `empty_pb2_X`
+		if strings.HasPrefix(line, "from google.protobuf import ") {
+			seen[strings.TrimPrefix(line, "from google.protobuf import ")]++
+			continue
+		}
+		if i := strings.LastIndex(line, " as "); i >= 0 {
+			seen[strings.TrimSuffix(line[i+4:], "")]++
+		}
+	}
+	for ident, count := range seen {
+		if count > 1 {
+			t.Errorf("identifier %q imported %d times in: %q", ident, count, got)
+		}
+	}
+	if len(seen) != 2 {
+		t.Errorf("expected 2 distinct imported identifiers, got %d in: %q", len(seen), got)
 	}
 }
