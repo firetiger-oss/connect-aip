@@ -94,3 +94,32 @@ func TestNoLegacyRESTSymbols(t *testing.T) {
 		}
 	}
 }
+
+// TestUnaryHandlerWithExternalReturnType pins the fix for a regression where
+// any RPC returning a message from a different proto package (e.g.
+// google.protobuf.Empty) emitted the type via the local proto package alias
+// (e.g. testv1.Empty), producing an "undefined" reference at compile time.
+// Cross-package types must resolve through g.QualifiedGoIdent, e.g.
+// emptypb.Empty.
+func TestUnaryHandlerWithExternalReturnType(t *testing.T) {
+	content := readFixture(t)
+
+	for _, want := range []string{
+		`emptypb "google.golang.org/protobuf/types/known/emptypb"`,
+		`*testv1.DeleteResourceRequest, *emptypb.Empty`,
+		`DeleteResource(ctx context.Context, req *testv1.DeleteResourceRequest) (*emptypb.Empty, error)`,
+		`*connectaip.Client[testv1.DeleteResourceRequest, emptypb.Empty]`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("fixture missing %q — cross-package return type (google.protobuf.Empty) is not resolving via the emptypb import", want)
+		}
+	}
+
+	for _, banned := range []string{
+		`testv1.Empty`,
+	} {
+		if strings.Contains(content, banned) {
+			t.Errorf("fixture contains %q — cross-package return type (google.protobuf.Empty) is being emitted via the local proto package alias", banned)
+		}
+	}
+}

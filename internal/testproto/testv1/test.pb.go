@@ -10,6 +10,7 @@ import (
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -554,12 +555,56 @@ func (*ListVersionsResponse) Descriptor() ([]byte, []int) {
 	return file_test_proto_rawDescGZIP(), []int{10}
 }
 
+type DeleteResourceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteResourceRequest) Reset() {
+	*x = DeleteResourceRequest{}
+	mi := &file_test_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteResourceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteResourceRequest) ProtoMessage() {}
+
+func (x *DeleteResourceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_test_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteResourceRequest.ProtoReflect.Descriptor instead.
+func (*DeleteResourceRequest) Descriptor() ([]byte, []int) {
+	return file_test_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *DeleteResourceRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
 var File_test_proto protoreflect.FileDescriptor
 
 const file_test_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"test.proto\x12\x12connectaip.test.v1\x1a\x1cgoogle/api/annotations.proto\"@\n" +
+	"test.proto\x12\x12connectaip.test.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1bgoogle/protobuf/empty.proto\"@\n" +
 	"\bResource\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\"r\n" +
@@ -590,14 +635,17 @@ const file_test_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\x02 \x01(\tR\tpageToken\"\x16\n" +
-	"\x14ListVersionsResponse2\xbf\x06\n" +
+	"\x14ListVersionsResponse\"+\n" +
+	"\x15DeleteResourceRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name2\xb4\a\n" +
 	"\vTestService\x12\x81\x01\n" +
 	"\x0eCreateResource\x12).connectaip.test.v1.CreateResourceRequest\x1a*.connectaip.test.v1.CreateResourceResponse\"\x18\x82\xd3\xe4\x93\x02\x12:\x01*\"\r/v1/resources\x12~\n" +
 	"\vGetResource\x12&.connectaip.test.v1.GetResourceRequest\x1a'.connectaip.test.v1.GetResourceResponse\"\x1e\x82\xd3\xe4\x93\x02\x18\x12\x16/v1/{name=resources/*}\x12\x93\x01\n" +
 	"\x0eUpdateResource\x12).connectaip.test.v1.UpdateResourceRequest\x1a*.connectaip.test.v1.UpdateResourceResponse\"*\x82\xd3\xe4\x93\x02$:\x01*2\x1f/v1/{resource.name=resources/*}\x12{\n" +
 	"\rListResources\x12(.connectaip.test.v1.ListResourcesRequest\x1a).connectaip.test.v1.ListResourcesResponse\"\x15\x82\xd3\xe4\x93\x02\x0f\x12\r/v1/resources\x12\x8a\x01\n" +
 	"\fListVersions\x12'.connectaip.test.v1.ListVersionsRequest\x1a(.connectaip.test.v1.ListVersionsResponse\"'\x82\xd3\xe4\x93\x02!\x12\x1f/v1/{name=resources/*}/versions\x12\x8b\x01\n" +
-	"\x0fStreamResources\x12).connectaip.test.v1.CreateResourceRequest\x1a*.connectaip.test.v1.CreateResourceResponse\"\x1f\x82\xd3\xe4\x93\x02\x19:\x01*\"\x14/v1/resources:stream0\x01B\xd4\x01\n" +
+	"\x0fStreamResources\x12).connectaip.test.v1.CreateResourceRequest\x1a*.connectaip.test.v1.CreateResourceResponse\"\x1f\x82\xd3\xe4\x93\x02\x19:\x01*\"\x14/v1/resources:stream0\x01\x12s\n" +
+	"\x0eDeleteResource\x12).connectaip.test.v1.DeleteResourceRequest\x1a\x16.google.protobuf.Empty\"\x1e\x82\xd3\xe4\x93\x02\x18*\x16/v1/{name=resources/*}B\xd4\x01\n" +
 	"\x16com.connectaip.test.v1B\tTestProtoP\x01ZEgithub.com/firetiger-oss/connect-aip/internal/testproto/testv1;testv1\xa2\x02\x03CTX\xaa\x02\x12Connectaip.Test.V1\xca\x02\x12Connectaip\\Test\\V1\xe2\x02\x1eConnectaip\\Test\\V1\\GPBMetadata\xea\x02\x14Connectaip::Test::V1b\x06proto3"
 
 var (
@@ -612,7 +660,7 @@ func file_test_proto_rawDescGZIP() []byte {
 	return file_test_proto_rawDescData
 }
 
-var file_test_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_test_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_test_proto_goTypes = []any{
 	(*Resource)(nil),               // 0: connectaip.test.v1.Resource
 	(*CreateResourceRequest)(nil),  // 1: connectaip.test.v1.CreateResourceRequest
@@ -625,6 +673,8 @@ var file_test_proto_goTypes = []any{
 	(*ListResourcesResponse)(nil),  // 8: connectaip.test.v1.ListResourcesResponse
 	(*ListVersionsRequest)(nil),    // 9: connectaip.test.v1.ListVersionsRequest
 	(*ListVersionsResponse)(nil),   // 10: connectaip.test.v1.ListVersionsResponse
+	(*DeleteResourceRequest)(nil),  // 11: connectaip.test.v1.DeleteResourceRequest
+	(*emptypb.Empty)(nil),          // 12: google.protobuf.Empty
 }
 var file_test_proto_depIdxs = []int32{
 	0,  // 0: connectaip.test.v1.CreateResourceRequest.resource:type_name -> connectaip.test.v1.Resource
@@ -639,14 +689,16 @@ var file_test_proto_depIdxs = []int32{
 	7,  // 9: connectaip.test.v1.TestService.ListResources:input_type -> connectaip.test.v1.ListResourcesRequest
 	9,  // 10: connectaip.test.v1.TestService.ListVersions:input_type -> connectaip.test.v1.ListVersionsRequest
 	1,  // 11: connectaip.test.v1.TestService.StreamResources:input_type -> connectaip.test.v1.CreateResourceRequest
-	2,  // 12: connectaip.test.v1.TestService.CreateResource:output_type -> connectaip.test.v1.CreateResourceResponse
-	4,  // 13: connectaip.test.v1.TestService.GetResource:output_type -> connectaip.test.v1.GetResourceResponse
-	6,  // 14: connectaip.test.v1.TestService.UpdateResource:output_type -> connectaip.test.v1.UpdateResourceResponse
-	8,  // 15: connectaip.test.v1.TestService.ListResources:output_type -> connectaip.test.v1.ListResourcesResponse
-	10, // 16: connectaip.test.v1.TestService.ListVersions:output_type -> connectaip.test.v1.ListVersionsResponse
-	2,  // 17: connectaip.test.v1.TestService.StreamResources:output_type -> connectaip.test.v1.CreateResourceResponse
-	12, // [12:18] is the sub-list for method output_type
-	6,  // [6:12] is the sub-list for method input_type
+	11, // 12: connectaip.test.v1.TestService.DeleteResource:input_type -> connectaip.test.v1.DeleteResourceRequest
+	2,  // 13: connectaip.test.v1.TestService.CreateResource:output_type -> connectaip.test.v1.CreateResourceResponse
+	4,  // 14: connectaip.test.v1.TestService.GetResource:output_type -> connectaip.test.v1.GetResourceResponse
+	6,  // 15: connectaip.test.v1.TestService.UpdateResource:output_type -> connectaip.test.v1.UpdateResourceResponse
+	8,  // 16: connectaip.test.v1.TestService.ListResources:output_type -> connectaip.test.v1.ListResourcesResponse
+	10, // 17: connectaip.test.v1.TestService.ListVersions:output_type -> connectaip.test.v1.ListVersionsResponse
+	2,  // 18: connectaip.test.v1.TestService.StreamResources:output_type -> connectaip.test.v1.CreateResourceResponse
+	12, // 19: connectaip.test.v1.TestService.DeleteResource:output_type -> google.protobuf.Empty
+	13, // [13:20] is the sub-list for method output_type
+	6,  // [6:13] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
 	6,  // [6:6] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name
@@ -663,7 +715,7 @@ func file_test_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_test_proto_rawDesc), len(file_test_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

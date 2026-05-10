@@ -3,6 +3,7 @@ syntax = "proto3";
 package connectaip.test.v1;
 
 import "google/api/annotations.proto";
+import "google/protobuf/empty.proto";
 
 option go_package = "github.com/firetiger-oss/connect-aip/internal/testproto/testv1;testv1";
 
@@ -48,6 +49,13 @@ service TestService {
     option (google.api.http) = {
       post: "/v1/resources:stream"
       body: "*"
+    };
+  }
+
+  // Returns google.protobuf.Empty to exercise cross-package response types.
+  rpc DeleteResource(DeleteResourceRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      delete: "/v1/{name=resources/*}"
     };
   }
 }
@@ -100,4 +108,8 @@ message ListVersionsRequest {
 }
 
 message ListVersionsResponse {
+}
+
+message DeleteResourceRequest {
+  string name = 1;
 }

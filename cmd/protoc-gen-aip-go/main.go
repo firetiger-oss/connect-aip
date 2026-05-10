@@ -92,7 +92,7 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 	alias := protoPackageAlias(file)
 	protoImportPath := string(file.GoImportPath)
 	for _, service := range file.Services {
-		generateServiceHandler(g, service, alias)
+		generateServiceHandler(g, service, alias, protoImportPath)
 		generateServiceClient(g, service, alias, protoImportPath)
 	}
 }
@@ -304,7 +304,7 @@ func hasNumericQueryParams(route *routeInfo) bool {
 }
 
 // generateServiceHandler generates the AIP handler for a service.
-func generateServiceHandler(g *protogen.GeneratedFile, service *protogen.Service, pkgAlias string) {
+func generateServiceHandler(g *protogen.GeneratedFile, service *protogen.Service, pkgAlias, protoImportPath string) {
 	serviceName := service.GoName
 	handlerName := serviceName + "AIPHandler"
 
@@ -336,7 +336,7 @@ func generateServiceHandler(g *protogen.GeneratedFile, service *protogen.Service
 	groups := groupRoutesByPattern(routes)
 
 	generateHandlerConstructorWithGroups(g, serviceName, handlerName, groups)
-	generateStandaloneHandlers(g, serviceName, routes, pkgAlias)
+	generateStandaloneHandlers(g, serviceName, routes, pkgAlias, protoImportPath)
 	generateDispatcherHandlers(g, serviceName, groups, pkgAlias)
 }
 
@@ -588,19 +588,19 @@ func toUpper(r rune) rune {
 }
 
 // generateStandaloneHandlers generates the standalone handler functions for each route.
-func generateStandaloneHandlers(g *protogen.GeneratedFile, serviceName string, routes []routeInfo, pkgAlias string) {
+func generateStandaloneHandlers(g *protogen.GeneratedFile, serviceName string, routes []routeInfo, pkgAlias, protoImportPath string) {
 	for _, route := range routes {
-		generateStandaloneHandler(g, serviceName, route, pkgAlias)
+		generateStandaloneHandler(g, serviceName, route, pkgAlias, protoImportPath)
 	}
 }
 
 // generateStandaloneHandler generates a standalone handler function for a specific route.
-func generateStandaloneHandler(g *protogen.GeneratedFile, serviceName string, route routeInfo, pkgAlias string) {
+func generateStandaloneHandler(g *protogen.GeneratedFile, serviceName string, route routeInfo, pkgAlias, protoImportPath string) {
 	funcName := "handle" + serviceName + route.rpcMethod
 	procedureConst := serviceName + route.rpcMethod + "Procedure"
 
-	inputType := pkgAlias + "." + route.inputType.GoIdent.GoName
-	outputType := pkgAlias + "." + route.outputType.GoIdent.GoName
+	inputType := qualifiedTypeName(g, route.inputType.GoIdent, pkgAlias, protoImportPath)
+	outputType := qualifiedTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
 
 	if route.isServerStreaming {
 		// Server-streaming: connectsse.Server handles the entire protocol translation.
@@ -619,11 +619,11 @@ func generateStandaloneHandler(g *protogen.GeneratedFile, serviceName string, ro
 	g.P("\treturn http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {")
 
 	if route.method == "GET" || route.method == "DELETE" || route.bodyField == "" {
-		g.P("\t\tconnectaip.ForwardWithBody[*", inputType, ", *", outputType, "](w, req, ", procedureConst, ", connectHandler, ", generateProtoLiteral(route.inputType, route.pathVars, pkgAlias), ")")
+		g.P("\t\tconnectaip.ForwardWithBody[*", inputType, ", *", outputType, "](w, req, ", procedureConst, ", connectHandler, ", generateProtoLiteral(g, route.inputType, route.pathVars, pkgAlias, protoImportPath), ")")
 	} else if route.bodyField == "*" && len(route.pathVars) == 0 {
 		g.P("\t\tconnectaip.Forward[*", inputType, ", *", outputType, "](w, req, ", procedureConst, ", connectHandler)")
 	} else if route.bodyField == "*" && len(route.pathVars) > 0 {
-		g.P("\t\tconnectaip.ForwardWithPathVars[*", inputType, ", *", outputType, "](w, req, ", procedureConst, ", connectHandler, ", generateProtoLiteral(route.inputType, route.pathVars, pkgAlias), ")")
+		g.P("\t\tconnectaip.ForwardWithPathVars[*", inputType, ", *", outputType, "](w, req, ", procedureConst, ", connectHandler, ", generateProtoLiteral(g, route.inputType, route.pathVars, pkgAlias, protoImportPath), ")")
 	} else {
 		g.P("\t\tconnectaip.Forward[*", inputType, ", *", outputType, "](w, req, ", procedureConst, ", connectHandler)")
 	}
@@ -705,8 +705,8 @@ func generateDispatcherHandler(g *protogen.GeneratedFile, serviceName string, gr
 // generates: &credentialsv1.GetCredentialRequest{Name: "credentials/" + req.PathValue("name")}
 // For nested: [{fieldPath: "credential.name", prefix: "credentials/"}] and inputType UpdateCredentialRequest
 // generates: &credentialsv1.UpdateCredentialRequest{Credential: &credentialsv1.Credential{Name: "credentials/" + req.PathValue("name")}}
-func generateProtoLiteral(inputType *protogen.Message, pathVars []pathVar, pkgAlias string) string {
-	inputTypeName := pkgAlias + "." + inputType.GoIdent.GoName
+func generateProtoLiteral(g *protogen.GeneratedFile, inputType *protogen.Message, pathVars []pathVar, pkgAlias, protoImportPath string) string {
+	inputTypeName := qualifiedTypeName(g, inputType.GoIdent, pkgAlias, protoImportPath)
 	if len(pathVars) == 0 {
 		return "&" + inputTypeName + "{}"
 	}
@@ -725,7 +725,7 @@ func generateProtoLiteral(inputType *protogen.Message, pathVars []pathVar, pkgAl
 			sb.WriteString(", ")
 		}
 		first = false
-		generateNestedFieldAssignment(&sb, inputType, strings.Split(pv.fieldPath, "."), pv, pkgAlias)
+		generateNestedFieldAssignment(g, &sb, inputType, strings.Split(pv.fieldPath, "."), pv, pkgAlias, protoImportPath)
 	}
 
 	sb.WriteString("}")
@@ -733,7 +733,7 @@ func generateProtoLiteral(inputType *protogen.Message, pathVars []pathVar, pkgAl
 }
 
 // generateNestedFieldAssignment generates the assignment for a potentially nested field path.
-func generateNestedFieldAssignment(sb *strings.Builder, msg *protogen.Message, fieldParts []string, pv pathVar, pkgAlias string) {
+func generateNestedFieldAssignment(g *protogen.GeneratedFile, sb *strings.Builder, msg *protogen.Message, fieldParts []string, pv pathVar, pkgAlias, protoImportPath string) {
 	if len(fieldParts) == 0 {
 		return
 	}
@@ -787,11 +787,11 @@ func generateNestedFieldAssignment(sb *strings.Builder, msg *protogen.Message, f
 			}
 		}
 	} else if targetField.Message != nil {
-		nestedTypeName := pkgAlias + "." + targetField.Message.GoIdent.GoName
+		nestedTypeName := qualifiedTypeName(g, targetField.Message.GoIdent, pkgAlias, protoImportPath)
 		sb.WriteString("&")
 		sb.WriteString(nestedTypeName)
 		sb.WriteString("{")
-		generateNestedFieldAssignment(sb, targetField.Message, fieldParts[1:], pv, pkgAlias)
+		generateNestedFieldAssignment(g, sb, targetField.Message, fieldParts[1:], pv, pkgAlias, protoImportPath)
 		sb.WriteString("}")
 	}
 }
@@ -1063,12 +1063,23 @@ func parseURLPatternToServeMux(pattern string) ([]pathVar, string, string, bool)
 // Client Generation
 // ============================================================================
 
-// streamingOutputTypeName returns the Go type expression for a server-streaming method's response.
-// When the response type is from the same proto package as the file being generated, it uses the
-// pre-declared pkgAlias to avoid adding a duplicate import alongside the one in generateImports.
-// For cross-package types (e.g., arrowv1.Message when generating queryv2connect), it delegates to
-// g.QualifiedGoIdent which adds the necessary import automatically.
-func streamingOutputTypeName(g *protogen.GeneratedFile, ident protogen.GoIdent, pkgAlias, protoImportPath string) string {
+// qualifiedTypeName returns the Go type expression for a message type referenced
+// in the generated file. When the type is from the same proto package as the file
+// being generated, it uses the pre-declared pkgAlias to avoid adding a duplicate
+// import alongside the one in generateImports. For cross-package types (e.g.,
+// emptypb.Empty for google.protobuf.Empty), it delegates to g.QualifiedGoIdent
+// which registers the import automatically (protogen prepends a separate import
+// block for these — valid Go, just two import blocks in the file).
+//
+// Known limitation: protogen's automatic import resolution does not see names
+// claimed by the manual import block (`pkgAlias`, `connectaip`, `connect`,
+// `connectsse`). If a generated file's local pkgAlias literally matches a
+// cross-package alias protogen would assign — e.g., a proto with
+// `option go_package = "..../emptypb;emptypb"` returning `google.protobuf.Empty`
+// — the file ends up with two `emptypb` imports and won't compile. Avoiding
+// this would require switching the file to use protogen-managed imports for
+// everything (no manual `import (...)` block); deferred to a follow-up.
+func qualifiedTypeName(g *protogen.GeneratedFile, ident protogen.GoIdent, pkgAlias, protoImportPath string) string {
 	if string(ident.GoImportPath) == protoImportPath {
 		return pkgAlias + "." + ident.GoName
 	}
@@ -1110,13 +1121,11 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 	g.P("// ", interfaceName, " is a AIP client for ", serviceName, ".")
 	g.P("type ", interfaceName, " interface {")
 	for _, route := range routes {
+		inputType := qualifiedTypeName(g, route.inputType.GoIdent, pkgAlias, protoImportPath)
+		outputType := qualifiedTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
 		if route.isServerStreaming {
-			inputType := pkgAlias + "." + route.inputType.GoIdent.GoName
-			outputType := streamingOutputTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
 			g.P("\t", route.rpcMethod, "(ctx context.Context, req *connect.Request[", inputType, "]) (*connect.ServerStreamForClient[", outputType, "], error)")
 		} else {
-			inputType := pkgAlias + "." + route.inputType.GoIdent.GoName
-			outputType := pkgAlias + "." + route.outputType.GoIdent.GoName
 			g.P("\t", route.rpcMethod, "(ctx context.Context, req *", inputType, ") (*", outputType, ", error)")
 		}
 	}
@@ -1128,13 +1137,11 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 	g.P("type ", implName, " struct {")
 	for _, route := range routes {
 		fieldName := strings.ToLower(route.rpcMethod[:1]) + route.rpcMethod[1:]
+		inputType := qualifiedTypeName(g, route.inputType.GoIdent, pkgAlias, protoImportPath)
+		outputType := qualifiedTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
 		if route.isServerStreaming {
-			inputType := pkgAlias + "." + route.inputType.GoIdent.GoName
-			outputType := streamingOutputTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
 			g.P("\t", fieldName, " *connect.Client[", inputType, ", ", outputType, "]")
 		} else {
-			inputType := pkgAlias + "." + route.inputType.GoIdent.GoName
-			outputType := pkgAlias + "." + route.outputType.GoIdent.GoName
 			g.P("\t", fieldName, " *connectaip.Client[", inputType, ", ", outputType, "]")
 		}
 	}
@@ -1150,8 +1157,8 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 		procedureConst := serviceName + route.rpcMethod + "Procedure"
 
 		if route.isServerStreaming {
-			inputType := pkgAlias + "." + route.inputType.GoIdent.GoName
-			outputType := streamingOutputTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
+			inputType := qualifiedTypeName(g, route.inputType.GoIdent, pkgAlias, protoImportPath)
+			outputType := qualifiedTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
 			restPath := route.serveMuxPath + route.customVerb
 			pathVarFnArg := "nil"
 			if len(route.pathVars) > 0 {
@@ -1163,8 +1170,8 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 			g.P("\t\t\tconnect.WithProtoJSON(),")
 			g.P("\t\t),")
 		} else {
-			inputType := pkgAlias + "." + route.inputType.GoIdent.GoName
-			outputType := pkgAlias + "." + route.outputType.GoIdent.GoName
+			inputType := qualifiedTypeName(g, route.inputType.GoIdent, pkgAlias, protoImportPath)
+			outputType := qualifiedTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
 
 			// Build MethodSpec
 			g.P("\t\t", fieldName, ": connectaip.NewClient[", inputType, ", ", outputType, "](")
@@ -1198,7 +1205,7 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 				if hasQueryParams(route) {
 					g.P("\t\t\t", serviceName, route.rpcMethod, "Query,")
 				} else {
-					g.P("\t\t\tfunc(*", pkgAlias, ".", route.inputType.GoIdent.GoName, ") map[string]string { return nil },")
+					g.P("\t\t\tfunc(*", inputType, ") map[string]string { return nil },")
 				}
 			} else {
 				g.P("\t\t\tnil,")
@@ -1215,7 +1222,7 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 	// Generate path var extractor functions (unary only)
 	for _, route := range routes {
 		if !route.isServerStreaming && len(route.pathVars) > 0 {
-			generatePathVarExtractor(g, serviceName, route, pkgAlias)
+			generatePathVarExtractor(g, serviceName, route, pkgAlias, protoImportPath)
 		}
 	}
 
@@ -1229,7 +1236,7 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 	// Generate query param extractor functions (unary only)
 	for _, route := range routes {
 		if !route.isServerStreaming && (route.method == "GET" || route.method == "DELETE" || route.bodyField == "") && hasQueryParams(route) {
-			generateQueryExtractor(g, serviceName, route, pkgAlias)
+			generateQueryExtractor(g, serviceName, route, pkgAlias, protoImportPath)
 		}
 	}
 
@@ -1244,8 +1251,8 @@ func generateClientMethod(g *protogen.GeneratedFile, implName string, route rout
 	fieldName := strings.ToLower(route.rpcMethod[:1]) + route.rpcMethod[1:]
 
 	if route.isServerStreaming {
-		inputType := pkgAlias + "." + route.inputType.GoIdent.GoName
-		outputType := streamingOutputTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
+		inputType := qualifiedTypeName(g, route.inputType.GoIdent, pkgAlias, protoImportPath)
+		outputType := qualifiedTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
 		g.P("func (c *", implName, ") ", route.rpcMethod, "(ctx context.Context, req *connect.Request[", inputType, "]) (*connect.ServerStreamForClient[", outputType, "], error) {")
 		g.P("\treturn c.", fieldName, ".CallServerStream(ctx, req)")
 		g.P("}")
@@ -1253,8 +1260,8 @@ func generateClientMethod(g *protogen.GeneratedFile, implName string, route rout
 		return
 	}
 
-	inputType := pkgAlias + "." + route.inputType.GoIdent.GoName
-	outputType := pkgAlias + "." + route.outputType.GoIdent.GoName
+	inputType := qualifiedTypeName(g, route.inputType.GoIdent, pkgAlias, protoImportPath)
+	outputType := qualifiedTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
 
 	g.P("func (c *", implName, ") ", route.rpcMethod, "(ctx context.Context, req *", inputType, ") (*", outputType, ", error) {")
 	g.P("\treturn c.", fieldName, ".Call(ctx, req)")
@@ -1263,8 +1270,8 @@ func generateClientMethod(g *protogen.GeneratedFile, implName string, route rout
 }
 
 // generatePathVarExtractor generates a function to extract path variables from a request.
-func generatePathVarExtractor(g *protogen.GeneratedFile, serviceName string, route routeInfo, pkgAlias string) {
-	inputType := pkgAlias + "." + route.inputType.GoIdent.GoName
+func generatePathVarExtractor(g *protogen.GeneratedFile, serviceName string, route routeInfo, pkgAlias, protoImportPath string) {
+	inputType := qualifiedTypeName(g, route.inputType.GoIdent, pkgAlias, protoImportPath)
 	funcName := serviceName + route.rpcMethod + "PathVars"
 
 	g.P("func ", funcName, "(req *", inputType, ") map[string]string {")
@@ -1396,8 +1403,8 @@ func jsonFieldPath(msg *protogen.Message, fieldPath string) []string {
 }
 
 // generateQueryExtractor generates a function to extract query parameters from a request.
-func generateQueryExtractor(g *protogen.GeneratedFile, serviceName string, route routeInfo, pkgAlias string) {
-	inputType := pkgAlias + "." + route.inputType.GoIdent.GoName
+func generateQueryExtractor(g *protogen.GeneratedFile, serviceName string, route routeInfo, pkgAlias, protoImportPath string) {
+	inputType := qualifiedTypeName(g, route.inputType.GoIdent, pkgAlias, protoImportPath)
 	funcName := serviceName + route.rpcMethod + "Query"
 
 	// Create a set of path variable field paths for quick lookup

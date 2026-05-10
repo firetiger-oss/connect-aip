@@ -9,6 +9,7 @@ import (
 	context "context"
 	errors "errors"
 	testv1 "github.com/firetiger-oss/connect-aip/internal/testproto/testv1"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	http "net/http"
 	strings "strings"
 )
@@ -50,6 +51,9 @@ const (
 	// TestServiceStreamResourcesProcedure is the fully-qualified name of the TestService's
 	// StreamResources RPC.
 	TestServiceStreamResourcesProcedure = "/connectaip.test.v1.TestService/StreamResources"
+	// TestServiceDeleteResourceProcedure is the fully-qualified name of the TestService's
+	// DeleteResource RPC.
+	TestServiceDeleteResourceProcedure = "/connectaip.test.v1.TestService/DeleteResource"
 )
 
 // TestServiceClient is a client for the connectaip.test.v1.TestService service.
@@ -61,6 +65,8 @@ type TestServiceClient interface {
 	ListVersions(context.Context, *connect.Request[testv1.ListVersionsRequest]) (*connect.Response[testv1.ListVersionsResponse], error)
 	// Server-streaming method used to validate the SSE handler path.
 	StreamResources(context.Context, *connect.Request[testv1.CreateResourceRequest]) (*connect.ServerStreamForClient[testv1.CreateResourceResponse], error)
+	// Returns google.protobuf.Empty to exercise cross-package response types.
+	DeleteResource(context.Context, *connect.Request[testv1.DeleteResourceRequest]) (*connect.Response[emptypb.Empty], error)
 }
 
 // NewTestServiceClient constructs a client for the connectaip.test.v1.TestService service. By
@@ -110,6 +116,12 @@ func NewTestServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(testServiceMethods.ByName("StreamResources")),
 			connect.WithClientOptions(opts...),
 		),
+		deleteResource: connect.NewClient[testv1.DeleteResourceRequest, emptypb.Empty](
+			httpClient,
+			baseURL+TestServiceDeleteResourceProcedure,
+			connect.WithSchema(testServiceMethods.ByName("DeleteResource")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -121,6 +133,7 @@ type testServiceClient struct {
 	listResources   *connect.Client[testv1.ListResourcesRequest, testv1.ListResourcesResponse]
 	listVersions    *connect.Client[testv1.ListVersionsRequest, testv1.ListVersionsResponse]
 	streamResources *connect.Client[testv1.CreateResourceRequest, testv1.CreateResourceResponse]
+	deleteResource  *connect.Client[testv1.DeleteResourceRequest, emptypb.Empty]
 }
 
 // CreateResource calls connectaip.test.v1.TestService.CreateResource.
@@ -153,6 +166,11 @@ func (c *testServiceClient) StreamResources(ctx context.Context, req *connect.Re
 	return c.streamResources.CallServerStream(ctx, req)
 }
 
+// DeleteResource calls connectaip.test.v1.TestService.DeleteResource.
+func (c *testServiceClient) DeleteResource(ctx context.Context, req *connect.Request[testv1.DeleteResourceRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.deleteResource.CallUnary(ctx, req)
+}
+
 // TestServiceHandler is an implementation of the connectaip.test.v1.TestService service.
 type TestServiceHandler interface {
 	CreateResource(context.Context, *connect.Request[testv1.CreateResourceRequest]) (*connect.Response[testv1.CreateResourceResponse], error)
@@ -162,6 +180,8 @@ type TestServiceHandler interface {
 	ListVersions(context.Context, *connect.Request[testv1.ListVersionsRequest]) (*connect.Response[testv1.ListVersionsResponse], error)
 	// Server-streaming method used to validate the SSE handler path.
 	StreamResources(context.Context, *connect.Request[testv1.CreateResourceRequest], *connect.ServerStream[testv1.CreateResourceResponse]) error
+	// Returns google.protobuf.Empty to exercise cross-package response types.
+	DeleteResource(context.Context, *connect.Request[testv1.DeleteResourceRequest]) (*connect.Response[emptypb.Empty], error)
 }
 
 // NewTestServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -207,6 +227,12 @@ func NewTestServiceHandler(svc TestServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(testServiceMethods.ByName("StreamResources")),
 		connect.WithHandlerOptions(opts...),
 	)
+	testServiceDeleteResourceHandler := connect.NewUnaryHandler(
+		TestServiceDeleteResourceProcedure,
+		svc.DeleteResource,
+		connect.WithSchema(testServiceMethods.ByName("DeleteResource")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/connectaip.test.v1.TestService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case TestServiceCreateResourceProcedure:
@@ -221,6 +247,8 @@ func NewTestServiceHandler(svc TestServiceHandler, opts ...connect.HandlerOption
 			testServiceListVersionsHandler.ServeHTTP(w, r)
 		case TestServiceStreamResourcesProcedure:
 			testServiceStreamResourcesHandler.ServeHTTP(w, r)
+		case TestServiceDeleteResourceProcedure:
+			testServiceDeleteResourceHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -252,4 +280,8 @@ func (UnimplementedTestServiceHandler) ListVersions(context.Context, *connect.Re
 
 func (UnimplementedTestServiceHandler) StreamResources(context.Context, *connect.Request[testv1.CreateResourceRequest], *connect.ServerStream[testv1.CreateResourceResponse]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("connectaip.test.v1.TestService.StreamResources is not implemented"))
+}
+
+func (UnimplementedTestServiceHandler) DeleteResource(context.Context, *connect.Request[testv1.DeleteResourceRequest]) (*connect.Response[emptypb.Empty], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("connectaip.test.v1.TestService.DeleteResource is not implemented"))
 }

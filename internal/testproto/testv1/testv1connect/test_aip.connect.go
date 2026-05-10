@@ -3,6 +3,10 @@
 package testv1connect
 
 import (
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
+)
+
+import (
 	"context"
 	"fmt"
 	"iter"
@@ -47,6 +51,9 @@ func NewTestServiceAIPHandler(
 		if !yield("POST /v1/resources:stream", handleTestServiceStreamResources(connectHandler)) {
 			return
 		}
+		if !yield("DELETE /v1/resources/{name}", handleTestServiceDeleteResource(connectHandler)) {
+			return
+		}
 	}
 }
 
@@ -84,6 +91,12 @@ func handleTestServiceStreamResources(connectHandler http.Handler) http.Handler 
 	return &connectsse.Server{Handler: connectHandler}
 }
 
+func handleTestServiceDeleteResource(connectHandler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		connectaip.ForwardWithBody[*testv1.DeleteResourceRequest, *emptypb.Empty](w, req, TestServiceDeleteResourceProcedure, connectHandler, &testv1.DeleteResourceRequest{Name: "resources/" + req.PathValue("name")})
+	})
+}
+
 // TestServiceAIPClient is a AIP client for TestService.
 type TestServiceAIPClient interface {
 	CreateResource(ctx context.Context, req *testv1.CreateResourceRequest) (*testv1.CreateResourceResponse, error)
@@ -92,6 +105,7 @@ type TestServiceAIPClient interface {
 	ListResources(ctx context.Context, req *testv1.ListResourcesRequest) (*testv1.ListResourcesResponse, error)
 	ListVersions(ctx context.Context, req *testv1.ListVersionsRequest) (*testv1.ListVersionsResponse, error)
 	StreamResources(ctx context.Context, req *connect.Request[testv1.CreateResourceRequest]) (*connect.ServerStreamForClient[testv1.CreateResourceResponse], error)
+	DeleteResource(ctx context.Context, req *testv1.DeleteResourceRequest) (*emptypb.Empty, error)
 }
 
 type testServiceAIPClient struct {
@@ -101,6 +115,7 @@ type testServiceAIPClient struct {
 	listResources   *connectaip.Client[testv1.ListResourcesRequest, testv1.ListResourcesResponse]
 	listVersions    *connectaip.Client[testv1.ListVersionsRequest, testv1.ListVersionsResponse]
 	streamResources *connect.Client[testv1.CreateResourceRequest, testv1.CreateResourceResponse]
+	deleteResource  *connectaip.Client[testv1.DeleteResourceRequest, emptypb.Empty]
 }
 
 // NewTestServiceAIPClient creates a new AIP client for TestService.
@@ -170,6 +185,19 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 			connectaip.SSEProcedureURL(baseURL, TestServiceStreamResourcesProcedure),
 			connect.WithProtoJSON(),
 		),
+		deleteResource: connectaip.NewClient[testv1.DeleteResourceRequest, emptypb.Empty](
+			httpClient, baseURL,
+			connectaip.MethodSpec{
+				HTTPMethod: "DELETE",
+				URLPattern: "/v1/resources/{name}",
+				PathVars: []connectaip.PathVar{
+					{Placeholder: "{name}", Prefix: "resources/"},
+				},
+			},
+			TestServiceDeleteResourcePathVars,
+			func(*testv1.DeleteResourceRequest) map[string]string { return nil },
+			opts...,
+		),
 	}
 }
 
@@ -186,6 +214,12 @@ func TestServiceUpdateResourcePathVars(req *testv1.UpdateResourceRequest) map[st
 }
 
 func TestServiceListVersionsPathVars(req *testv1.ListVersionsRequest) map[string]string {
+	return map[string]string{
+		"{name}": req.GetName(),
+	}
+}
+
+func TestServiceDeleteResourcePathVars(req *testv1.DeleteResourceRequest) map[string]string {
 	return map[string]string{
 		"{name}": req.GetName(),
 	}
@@ -238,4 +272,8 @@ func (c *testServiceAIPClient) ListVersions(ctx context.Context, req *testv1.Lis
 
 func (c *testServiceAIPClient) StreamResources(ctx context.Context, req *connect.Request[testv1.CreateResourceRequest]) (*connect.ServerStreamForClient[testv1.CreateResourceResponse], error) {
 	return c.streamResources.CallServerStream(ctx, req)
+}
+
+func (c *testServiceAIPClient) DeleteResource(ctx context.Context, req *testv1.DeleteResourceRequest) (*emptypb.Empty, error) {
+	return c.deleteResource.Call(ctx, req)
 }
