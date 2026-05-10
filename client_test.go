@@ -3,6 +3,7 @@ package connectaip
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -594,5 +595,75 @@ func TestCallRequestStaticAndPerCallHeaders(t *testing.T) {
 	}
 	if gotStatic != "static-value" {
 		t.Errorf("expected static X-Static to be sent when not overridden, got %q", gotStatic)
+	}
+}
+
+// TestCallRequestErrorIncludesResponseHeaders verifies that on a non-2xx
+// response the headers (Retry-After, X-Request-Id, etc.) propagate into
+// connect.Error.Meta(), matching the behavior of a standard connect-go
+// client. Without this, a caller swapping over to the AIP client loses
+// metadata that drives retry / observability logic.
+func TestCallRequestErrorIncludesResponseHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.Header().Set("X-Request-Id", "req-123")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"code":"resource_exhausted","message":"slow down"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient[testRequest, testResponse](
+		server.Client(),
+		server.URL,
+		MethodSpec{HTTPMethod: "GET", URLPattern: "/v1/items"},
+		nil,
+		nil,
+	)
+
+	_, err := client.CallRequest(t.Context(), connect.NewRequest(&testRequest{}))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var connectErr *connect.Error
+	if !errors.As(err, &connectErr) {
+		t.Fatalf("expected *connect.Error, got %T", err)
+	}
+	if got := connectErr.Meta().Get("Retry-After"); got != "30" {
+		t.Errorf("expected Retry-After=30 in error meta, got %q", got)
+	}
+	if got := connectErr.Meta().Get("X-Request-Id"); got != "req-123" {
+		t.Errorf("expected X-Request-Id in error meta, got %q", got)
+	}
+}
+
+// TestCallRequestPropagatesTrailers verifies that HTTP trailers on a 2xx
+// response surface via connect.Response.Trailer(), matching the standard
+// connect-go client. Trailers are used in observability tooling to carry
+// post-body metadata (e.g. timing summaries, server-side trace IDs).
+func TestCallRequestPropagatesTrailers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Announce + set trailer up front using net/http's TrailerPrefix
+		// convention; the value lands in resp.Trailer on the client.
+		w.Header().Set(http.TrailerPrefix+"X-Server-Trailer", "trailer-value")
+		_, _ = w.Write([]byte(`{"id":"ok"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient[testRequest, testResponse](
+		server.Client(),
+		server.URL,
+		MethodSpec{HTTPMethod: "GET", URLPattern: "/v1/items"},
+		nil,
+		nil,
+	)
+
+	resp, err := client.CallRequest(t.Context(), connect.NewRequest(&testRequest{}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := resp.Trailer().Get("X-Server-Trailer"); got != "trailer-value" {
+		t.Errorf("expected X-Server-Trailer=trailer-value, got %q (full trailers: %v)", got, resp.Trailer())
 	}
 }

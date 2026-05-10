@@ -315,12 +315,13 @@ func (c *Client[Req, Resp]) CallRequest(ctx context.Context, connectReq *connect
 	next := connect.UnaryFunc(func(ctx context.Context, anyReq connect.AnyRequest) (connect.AnyResponse, error) {
 		httpReq = httpReq.WithContext(ctx)
 		httpReq.Header = anyReq.Header().Clone()
-		msg, respHeader, callErr := doHTTPCall[Resp](httpClient, httpReq)
+		msg, respHeader, respTrailer, callErr := doHTTPCall[Resp](httpClient, httpReq)
 		if callErr != nil {
 			return nil, callErr
 		}
 		out := connect.NewResponse(msg)
 		copyHeader(out.Header(), respHeader)
+		copyHeader(out.Trailer(), respTrailer)
 		return out, nil
 	})
 
@@ -360,50 +361,59 @@ func setRequestIsClient[T any](req *connect.Request[T]) {
 	spec.IsClient = true
 }
 
-func doHTTPCall[Resp any](httpClient connect.HTTPClient, httpReq *http.Request) (*Resp, http.Header, error) {
+func doHTTPCall[Resp any](httpClient connect.HTTPClient, httpReq *http.Request) (*Resp, http.Header, http.Header, error) {
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		return nil, nil, fmt.Errorf("executing request: %w", err)
+		return nil, nil, nil, fmt.Errorf("executing request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, resp.Header, parseErrorResponse(resp.StatusCode, respBody)
+		return nil, resp.Header, resp.Trailer, parseErrorResponse(resp.StatusCode, respBody, resp.Header, resp.Trailer)
 	}
 
 	var result Resp
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, resp.Header, fmt.Errorf("reading response: %w", err)
+		return nil, resp.Header, resp.Trailer, fmt.Errorf("reading response: %w", err)
 	}
 	if pm, ok := any(&result).(proto.Message); ok {
 		if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(respBody, pm); err != nil {
-			return nil, resp.Header, fmt.Errorf("decoding response: %w", err)
+			return nil, resp.Header, resp.Trailer, fmt.Errorf("decoding response: %w", err)
 		}
 	} else {
 		if err := json.Unmarshal(respBody, &result); err != nil {
-			return nil, resp.Header, fmt.Errorf("decoding response: %w", err)
+			return nil, resp.Header, resp.Trailer, fmt.Errorf("decoding response: %w", err)
 		}
 	}
 
-	return &result, resp.Header, nil
+	return &result, resp.Header, resp.Trailer, nil
 }
 
-// parseErrorResponse parses an HTTP error response body into a *connect.Error.
+// parseErrorResponse parses an HTTP error response body into a *connect.Error,
+// copying the response headers and trailers onto the error's metadata so
+// callers checking err.Meta() (e.g. for Retry-After or request IDs) see the
+// same values they would when using a connect-go-generated client.
 // The server returns JSON like {"code":"not_found","message":"resource not found"}.
 // If the body can't be parsed, it falls back to mapping the HTTP status code.
-func parseErrorResponse(statusCode int, body []byte) *connect.Error {
+func parseErrorResponse(statusCode int, body []byte, header, trailer http.Header) *connect.Error {
 	var errBody struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	}
+	var connectErr *connect.Error
 	if json.Unmarshal(body, &errBody) == nil && errBody.Code != "" {
 		if code, ok := connectCodeFromString(errBody.Code); ok {
-			return connect.NewError(code, fmt.Errorf("%s", errBody.Message))
+			connectErr = connect.NewError(code, fmt.Errorf("%s", errBody.Message))
 		}
 	}
-	return connect.NewError(httpStatusToConnectCode(statusCode), fmt.Errorf("%s", string(body)))
+	if connectErr == nil {
+		connectErr = connect.NewError(httpStatusToConnectCode(statusCode), fmt.Errorf("%s", string(body)))
+	}
+	copyHeader(connectErr.Meta(), header)
+	copyHeader(connectErr.Meta(), trailer)
+	return connectErr
 }
 
 func httpStatusToConnectCode(status int) connect.Code {
