@@ -56,6 +56,54 @@ The TypeScript plugin emits `*_aip.ts` with a `*AIPClient` class per service. Th
 
 The Python plugin emits `*_aip.py` with a `*AIPClient` class per service that uses `httpx` for transport. Install the `connectaip` runtime alongside.
 
+## OpenAPI spec generation
+
+`connect-aip` only emits language bindings. To publish the same REST surface as an OpenAPI document — for docs sites, Swagger UI, third-party SDK generators, gateway configs — pair it with [`sudorandom/protoc-gen-connect-openapi`](https://github.com/sudorandom/protoc-gen-connect-openapi). It reads the same `google.api.http` annotations and emits OpenAPI 3.1.
+
+Install the plugin:
+
+```sh
+go install github.com/sudorandom/protoc-gen-connect-openapi@latest
+```
+
+Add a separate buf template so the OpenAPI generator runs alongside (not inside) your codegen template:
+
+```yaml
+# buf.openapi.yaml
+version: v2
+
+inputs:
+  - directory: proto
+
+plugins:
+  - local: [protoc-gen-connect-openapi]
+    out: openapi
+    opt:
+      - format=yaml
+      - base=openapi-base.yaml
+      # Publish the REST surface only. RPCs without a google.api.http
+      # annotation are omitted from the spec — matching what connect-aip emits.
+      - only-googleapi-http
+    strategy: all
+```
+
+The `only-googleapi-http` option is the key: it drops any RPC that doesn't carry an HTTP rule, so the OpenAPI document describes the exact same operations that `connect-aip` registers on the mux. Without it, the spec would advertise gRPC-only methods that have no REST endpoint.
+
+`base=openapi-base.yaml` lets you pin top-level fields (title, version, servers, security schemes) that the plugin merges into every generated document. A minimal base looks like:
+
+```yaml
+# openapi-base.yaml
+openapi: 3.1.0
+info:
+  version: v1
+```
+
+Then run it as a separate step from your `buf.gen.yaml`:
+
+```sh
+buf generate --template buf.openapi.yaml
+```
+
 ## License
 
 Apache 2.0
