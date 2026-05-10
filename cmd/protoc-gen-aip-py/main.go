@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 
 	"google.golang.org/genproto/googleapis/api/annotations"
@@ -52,9 +54,6 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 			if !hasOnlyStringPathParams(route, method.Input) {
 				continue
 			}
-			if method.Output.Desc.ParentFile().Path() != file.Desc.Path() {
-				continue
-			}
 			if method.Desc.IsStreamingServer() {
 				route.streaming = true
 				route.procedure = "/" + string(service.Desc.FullName()) + "/" + string(method.Desc.Name())
@@ -79,9 +78,22 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 	protoPath := string(file.Desc.Path())
 	pythonPath := strings.TrimSuffix(protoPath, ".proto")
 	pythonPath = strings.ReplaceAll(pythonPath, "/", ".")
-	protoDir := protoPath[:strings.LastIndex(protoPath, "/")]
-	baseName := strings.TrimSuffix(protoPath[strings.LastIndex(protoPath, "/")+1:], ".proto")
-	outputPath := protoDir + "/" + baseName + "_aip.py"
+	var protoDir, baseName string
+	if slash := strings.LastIndex(protoPath, "/"); slash >= 0 {
+		protoDir = protoPath[:slash+1]
+		baseName = strings.TrimSuffix(protoPath[slash+1:], ".proto")
+	} else {
+		baseName = strings.TrimSuffix(protoPath, ".proto")
+	}
+	outputPath := protoDir + baseName + "_aip.py"
+
+	resolver := newPyTypeResolver(file)
+	for _, sr := range allServices {
+		for _, route := range sr.routes {
+			resolver.register(route.inputType)
+			resolver.register(route.outputType)
+		}
+	}
 
 	g := gen.NewGeneratedFile(outputPath, "")
 
@@ -96,6 +108,9 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 	g.P("import httpx")
 	g.P()
 	g.P("import ", pythonPath+"_pb2 as pb2")
+	for _, line := range resolver.importLines() {
+		g.P(line)
+	}
 	var imports []string
 	imports = append(imports, "Client", "MethodSpec")
 	if hasPathVars {
@@ -108,7 +123,7 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 	g.P()
 
 	for _, sr := range allServices {
-		generateServiceBody(g, sr.service, sr.routes)
+		generateServiceBody(g, sr.service, sr.routes, resolver)
 	}
 }
 
@@ -130,6 +145,100 @@ type pathVar struct {
 	fieldPath string
 	prefix    string
 	wildcard  bool
+}
+
+// pyTypeResolver tracks message types referenced by the file under generation
+// and produces the Python type expression for each, emitting any extra `import`
+// lines needed to bring cross-package types into scope.
+//
+// Local types come from the always-present `import <pythonPath>_pb2 as pb2`.
+// Well-known types (proto file path under `google/protobuf/`) come in via
+// `from google.protobuf import <basename>_pb2` and are referenced as
+// `<basename>_pb2.X`. Any other cross-file type is imported as
+// `import <module>_pb2 as <basename>_pb2` (path mirrors the local
+// proto-path-to-Python-module convention).
+type pyTypeResolver struct {
+	currentFile string
+
+	// wktBaseNames is the set of basenames (e.g., "empty") needed from
+	// google.protobuf — each contributes a `from google.protobuf import
+	// <name>_pb2` line.
+	wktBaseNames map[string]struct{}
+
+	// otherFiles maps a non-local, non-WKT proto file path to its chosen
+	// Python module alias (e.g. "other_pb2").
+	otherFiles map[string]string
+}
+
+func newPyTypeResolver(file *protogen.File) *pyTypeResolver {
+	return &pyTypeResolver{
+		currentFile:  string(file.Desc.Path()),
+		wktBaseNames: map[string]struct{}{},
+		otherFiles:   map[string]string{},
+	}
+}
+
+func (r *pyTypeResolver) register(msg *protogen.Message) {
+	r.registerSource(string(msg.Desc.ParentFile().Path()), string(msg.Desc.Name()))
+}
+
+func (r *pyTypeResolver) registerSource(source, name string) {
+	if source == r.currentFile {
+		return
+	}
+	base := strings.TrimSuffix(source[strings.LastIndex(source, "/")+1:], ".proto")
+	if isWellKnownProtoFile(source) {
+		r.wktBaseNames[base] = struct{}{}
+		return
+	}
+	if _, ok := r.otherFiles[source]; ok {
+		return
+	}
+	r.otherFiles[source] = base + "_pb2"
+}
+
+func (r *pyTypeResolver) resolve(msg *protogen.Message) string {
+	return r.resolveSource(string(msg.Desc.ParentFile().Path()), string(msg.Desc.Name()))
+}
+
+func (r *pyTypeResolver) resolveSource(source, name string) string {
+	if source == r.currentFile {
+		return "pb2." + name
+	}
+	base := strings.TrimSuffix(source[strings.LastIndex(source, "/")+1:], ".proto")
+	if isWellKnownProtoFile(source) {
+		return base + "_pb2." + name
+	}
+	return r.otherFiles[source] + "." + name
+}
+
+// importLines returns extra `import` statements (excluding the always-present
+// local `import <pythonPath>_pb2 as pb2`), sorted by source for stable output.
+func (r *pyTypeResolver) importLines() []string {
+	var lines []string
+	wktBases := make([]string, 0, len(r.wktBaseNames))
+	for b := range r.wktBaseNames {
+		wktBases = append(wktBases, b)
+	}
+	sort.Strings(wktBases)
+	for _, b := range wktBases {
+		lines = append(lines, fmt.Sprintf("from google.protobuf import %s_pb2", b))
+	}
+	sources := make([]string, 0, len(r.otherFiles))
+	for s := range r.otherFiles {
+		sources = append(sources, s)
+	}
+	sort.Strings(sources)
+	for _, source := range sources {
+		alias := r.otherFiles[source]
+		modulePath := strings.ReplaceAll(strings.TrimSuffix(source, ".proto"), "/", ".")
+		lines = append(lines, fmt.Sprintf("import %s_pb2 as %s", modulePath, alias))
+	}
+	return lines
+}
+
+func isWellKnownProtoFile(path string) bool {
+	return strings.HasPrefix(path, "google/protobuf/")
 }
 
 func getHTTPRule(method *protogen.Method) *annotations.HttpRule {
@@ -289,10 +398,10 @@ func findFieldByPath(fieldPath string, msg *protogen.Message) *protogen.Field {
 	return nil
 }
 
-func generateServiceBody(g *protogen.GeneratedFile, service *protogen.Service, routes []routeInfo) {
+func generateServiceBody(g *protogen.GeneratedFile, service *protogen.Service, routes []routeInfo, resolver *pyTypeResolver) {
 	for _, route := range routes {
-		generatePathVarFn(g, route)
-		generateQueryFn(g, route)
+		generatePathVarFn(g, route, resolver)
+		generateQueryFn(g, route, resolver)
 	}
 
 	serviceName := service.GoName
@@ -310,22 +419,21 @@ func generateServiceBody(g *protogen.GeneratedFile, service *protogen.Service, r
 	g.P("    ) -> None:")
 
 	for _, route := range routes {
-		generateClientInit(g, route)
+		generateClientInit(g, route, resolver)
 	}
 	g.P()
 
 	for _, route := range routes {
-		generatePythonMethod(g, route)
+		generatePythonMethod(g, route, resolver)
 	}
 }
 
-func generatePathVarFn(g *protogen.GeneratedFile, route routeInfo) {
+func generatePathVarFn(g *protogen.GeneratedFile, route routeInfo, resolver *pyTypeResolver) {
 	if len(route.pathVars) == 0 {
 		return
 	}
 	methodName := camelToSnake(route.rpcMethod)
-	inputTypeName := string(route.inputType.Desc.Name())
-	inputType := "pb2." + inputTypeName
+	inputType := resolver.resolve(route.inputType)
 
 	g.P()
 	g.P("def _", methodName, "_path_vars(req: ", inputType, ") -> dict[str, str]:")
@@ -342,7 +450,7 @@ func generatePathVarFn(g *protogen.GeneratedFile, route routeInfo) {
 	g.P("    }")
 }
 
-func generateQueryFn(g *protogen.GeneratedFile, route routeInfo) {
+func generateQueryFn(g *protogen.GeneratedFile, route routeInfo, resolver *pyTypeResolver) {
 	if route.method != "GET" && route.method != "DELETE" {
 		return
 	}
@@ -369,8 +477,7 @@ func generateQueryFn(g *protogen.GeneratedFile, route routeInfo) {
 	}
 
 	methodName := camelToSnake(route.rpcMethod)
-	inputTypeName := string(route.inputType.Desc.Name())
-	inputType := "pb2." + inputTypeName
+	inputType := resolver.resolve(route.inputType)
 
 	g.P()
 	g.P("def _", methodName, "_query(req: ", inputType, ") -> dict[str, str]:")
@@ -395,12 +502,10 @@ func generateQueryFn(g *protogen.GeneratedFile, route routeInfo) {
 	g.P("    return params")
 }
 
-func generateClientInit(g *protogen.GeneratedFile, route routeInfo) {
+func generateClientInit(g *protogen.GeneratedFile, route routeInfo, resolver *pyTypeResolver) {
 	methodName := camelToSnake(route.rpcMethod)
-	inputTypeName := string(route.inputType.Desc.Name())
-	outputTypeName := string(route.outputType.Desc.Name())
-	inputType := "pb2." + inputTypeName
-	outputType := "pb2." + outputTypeName
+	inputType := resolver.resolve(route.inputType)
+	outputType := resolver.resolve(route.outputType)
 
 	pathVarFnStr := "None"
 	if len(route.pathVars) > 0 {
@@ -491,12 +596,10 @@ func generateClientInit(g *protogen.GeneratedFile, route routeInfo) {
 	g.P("        )")
 }
 
-func generatePythonMethod(g *protogen.GeneratedFile, route routeInfo) {
+func generatePythonMethod(g *protogen.GeneratedFile, route routeInfo, resolver *pyTypeResolver) {
 	methodName := camelToSnake(route.rpcMethod)
-	inputTypeName := string(route.inputType.Desc.Name())
-	outputTypeName := string(route.outputType.Desc.Name())
-	inputType := "pb2." + inputTypeName
-	outputType := "pb2." + outputTypeName
+	inputType := resolver.resolve(route.inputType)
+	outputType := resolver.resolve(route.outputType)
 
 	if route.streaming {
 		g.P("    def ", methodName, "(")

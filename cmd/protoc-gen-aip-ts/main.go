@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 
 	"google.golang.org/genproto/googleapis/api/annotations"
@@ -51,9 +53,6 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 			if !hasOnlyStringPathParams(route, method.Input) {
 				continue
 			}
-			if method.Output.Desc.ParentFile().Path() != file.Desc.Path() {
-				continue
-			}
 			if method.Desc.IsStreamingServer() {
 				route.streaming = true
 				route.procedure = "/" + string(service.Desc.FullName()) + "/" + string(method.Desc.Name())
@@ -71,10 +70,23 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 	}
 
 	protoPath := string(file.Desc.Path())
-	protoDir := protoPath[:strings.LastIndex(protoPath, "/")]
-	baseName := strings.TrimSuffix(protoPath[strings.LastIndex(protoPath, "/")+1:], ".proto")
-	outputPath := protoDir + "/" + baseName + "_aip.ts"
+	var protoDir, baseName string
+	if slash := strings.LastIndex(protoPath, "/"); slash >= 0 {
+		protoDir = protoPath[:slash+1]
+		baseName = strings.TrimSuffix(protoPath[slash+1:], ".proto")
+	} else {
+		baseName = strings.TrimSuffix(protoPath, ".proto")
+	}
+	outputPath := protoDir + baseName + "_aip.ts"
 	importPath := "./" + baseName + "_pb"
+
+	resolver := newTSTypeResolver(file)
+	for _, sr := range allServices {
+		for _, route := range sr.routes {
+			resolver.register(route.inputType)
+			resolver.register(route.outputType)
+		}
+	}
 
 	g := gen.NewGeneratedFile(outputPath, "")
 
@@ -82,6 +94,9 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 	g.P()
 	g.P("import { create, fromJson, toJson, type DescMessage, type JsonValue, type MessageInitShape, type MessageShape, type Registry } from \"@bufbuild/protobuf\";")
 	g.P("import * as pb from \"", importPath, "\";")
+	for _, line := range resolver.importLines() {
+		g.P(line)
+	}
 	g.P()
 	g.P("export interface AIPClientOptions {")
 	g.P("  headers?: Record<string, string>;")
@@ -170,7 +185,7 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 	}
 
 	for _, sr := range allServices {
-		generateServiceBody(g, sr.service, sr.routes)
+		generateServiceBody(g, sr.service, sr.routes, resolver)
 	}
 }
 
@@ -192,6 +207,101 @@ type pathVar struct {
 	fieldPath string
 	prefix    string
 	wildcard  bool
+}
+
+// tsTypeResolver tracks message types referenced by the file under generation
+// and produces the TypeScript type expression and Schema expression for each,
+// emitting any extra `import` lines needed to bring cross-package types into
+// scope.
+//
+// Local types come from the sibling `<file>_pb` module via the always-present
+// `import * as pb from "./<file>_pb"`. Well-known types (proto file path under
+// `google/protobuf/`) are imported by name from `@bufbuild/protobuf/wkt`. Any
+// other cross-file types get a namespace import alias derived from the source
+// proto file's basename.
+type tsTypeResolver struct {
+	currentFile string
+
+	// wktNames is the set of named imports needed from @bufbuild/protobuf/wkt
+	// (each message contributes both its type name and its <Name>Schema).
+	wktNames map[string]struct{}
+
+	// otherFiles maps a non-local, non-WKT proto file path to its chosen
+	// namespace alias (e.g. "other_pb").
+	otherFiles map[string]string
+}
+
+func newTSTypeResolver(file *protogen.File) *tsTypeResolver {
+	return &tsTypeResolver{
+		currentFile: string(file.Desc.Path()),
+		wktNames:    map[string]struct{}{},
+		otherFiles:  map[string]string{},
+	}
+}
+
+func (r *tsTypeResolver) register(msg *protogen.Message) {
+	r.registerSource(string(msg.Desc.ParentFile().Path()), string(msg.Desc.Name()))
+}
+
+func (r *tsTypeResolver) registerSource(source, name string) {
+	if source == r.currentFile {
+		return
+	}
+	if isWellKnownProtoFile(source) {
+		r.wktNames[name] = struct{}{}
+		r.wktNames[name+"Schema"] = struct{}{}
+		return
+	}
+	if _, ok := r.otherFiles[source]; ok {
+		return
+	}
+	base := strings.TrimSuffix(source[strings.LastIndex(source, "/")+1:], ".proto")
+	r.otherFiles[source] = base + "_pb"
+}
+
+func (r *tsTypeResolver) resolve(msg *protogen.Message) (typeName, schemaName string) {
+	return r.resolveSource(string(msg.Desc.ParentFile().Path()), string(msg.Desc.Name()))
+}
+
+func (r *tsTypeResolver) resolveSource(source, name string) (typeName, schemaName string) {
+	if source == r.currentFile {
+		return "pb." + name, "pb." + name + "Schema"
+	}
+	if isWellKnownProtoFile(source) {
+		return name, name + "Schema"
+	}
+	alias := r.otherFiles[source]
+	return alias + "." + name, alias + "." + name + "Schema"
+}
+
+// importLines returns extra `import` statements (excluding the always-present
+// local `import * as pb from "./<file>_pb"`), sorted by source for stable
+// output.
+func (r *tsTypeResolver) importLines() []string {
+	var lines []string
+	if len(r.wktNames) > 0 {
+		names := make([]string, 0, len(r.wktNames))
+		for n := range r.wktNames {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		lines = append(lines, fmt.Sprintf("import { %s } from \"@bufbuild/protobuf/wkt\";", strings.Join(names, ", ")))
+	}
+	sources := make([]string, 0, len(r.otherFiles))
+	for s := range r.otherFiles {
+		sources = append(sources, s)
+	}
+	sort.Strings(sources)
+	for _, source := range sources {
+		alias := r.otherFiles[source]
+		base := strings.TrimSuffix(source[strings.LastIndex(source, "/")+1:], ".proto")
+		lines = append(lines, fmt.Sprintf("import * as %s from \"./%s_pb\";", alias, base))
+	}
+	return lines
+}
+
+func isWellKnownProtoFile(path string) bool {
+	return strings.HasPrefix(path, "google/protobuf/")
 }
 
 func getHTTPRule(method *protogen.Method) *annotations.HttpRule {
@@ -351,7 +461,7 @@ func findFieldByPath(fieldPath string, msg *protogen.Message) *protogen.Field {
 	return nil
 }
 
-func generateServiceBody(g *protogen.GeneratedFile, service *protogen.Service, routes []routeInfo) {
+func generateServiceBody(g *protogen.GeneratedFile, service *protogen.Service, routes []routeInfo, resolver *tsTypeResolver) {
 	serviceName := service.GoName
 	className := serviceName + "AIPClient"
 
@@ -370,7 +480,7 @@ func generateServiceBody(g *protogen.GeneratedFile, service *protogen.Service, r
 	g.P()
 
 	for _, route := range routes {
-		generateTSMethod(g, route)
+		generateTSMethod(g, route, resolver)
 	}
 
 	g.P("}")
@@ -457,23 +567,21 @@ func generateSSEHelper(g *protogen.GeneratedFile) {
 	g.P()
 }
 
-func generateTSMethod(g *protogen.GeneratedFile, route routeInfo) {
+func generateTSMethod(g *protogen.GeneratedFile, route routeInfo, resolver *tsTypeResolver) {
 	methodName := lowerFirst(route.rpcMethod)
-	inputTypeName := string(route.inputType.Desc.Name())
-	outputTypeName := string(route.outputType.Desc.Name())
-	inputType := "pb." + inputTypeName
-	outputType := "pb." + outputTypeName
+	inputType, inputSchema := resolver.resolve(route.inputType)
+	outputType, outputSchema := resolver.resolve(route.outputType)
 
 	if route.streaming {
-		generateTSStreamingMethod(g, route, methodName, inputTypeName, inputType, outputTypeName, outputType)
+		generateTSStreamingMethod(g, route, methodName, inputType, inputSchema, outputType, outputSchema)
 		return
 	}
 
 	g.P("  async ", methodName, "(")
-	g.P("    request: ", inputType, " | MessageInitShape<typeof pb.", inputTypeName, "Schema>,")
+	g.P("    request: ", inputType, " | MessageInitShape<typeof ", inputSchema, ">,")
 	g.P("    options: { headers?: Record<string, string>; signal?: AbortSignal } = {},")
 	g.P("  ): Promise<", outputType, "> {")
-	g.P("    const msg = create(pb.", inputTypeName, "Schema, request as MessageInitShape<typeof pb.", inputTypeName, "Schema>);")
+	g.P("    const msg = create(", inputSchema, ", request as MessageInitShape<typeof ", inputSchema, ">);")
 
 	if len(route.pathVars) == 0 {
 		g.P("    const url = `${this.baseUrl}", route.serveMuxPath, "`;")
@@ -520,7 +628,7 @@ func generateTSMethod(g *protogen.GeneratedFile, route routeInfo) {
 		g.P("        \"Content-Type\": \"application/json\",")
 		g.P("        Accept: \"application/json\",")
 		g.P("      },")
-		g.P("      body: JSON.stringify(toJson(pb.", inputTypeName, "Schema, msg, { registry: this.registry })),")
+		g.P("      body: JSON.stringify(toJson(", inputSchema, ", msg, { registry: this.registry })),")
 		g.P("      signal: options.signal,")
 		g.P("    });")
 	}
@@ -531,17 +639,17 @@ func generateTSMethod(g *protogen.GeneratedFile, route routeInfo) {
 	g.P("    }")
 	g.P()
 	g.P("    const data = await response.json();")
-	g.P("    return fromJsonAny(pb.", outputTypeName, "Schema, data, this.registry);")
+	g.P("    return fromJsonAny(", outputSchema, ", data, this.registry);")
 	g.P("  }")
 	g.P()
 }
 
-func generateTSStreamingMethod(g *protogen.GeneratedFile, route routeInfo, methodName, inputTypeName, inputType, outputTypeName, outputType string) {
+func generateTSStreamingMethod(g *protogen.GeneratedFile, route routeInfo, methodName, inputType, inputSchema, outputType, outputSchema string) {
 	g.P("  async *", methodName, "(")
-	g.P("    request: ", inputType, " | MessageInitShape<typeof pb.", inputTypeName, "Schema>,")
+	g.P("    request: ", inputType, " | MessageInitShape<typeof ", inputSchema, ">,")
 	g.P("    options: { headers?: Record<string, string>; signal?: AbortSignal } = {},")
 	g.P("  ): AsyncGenerator<", outputType, "> {")
-	g.P("    const msg = create(pb.", inputTypeName, "Schema, request as MessageInitShape<typeof pb.", inputTypeName, "Schema>);")
+	g.P("    const msg = create(", inputSchema, ", request as MessageInitShape<typeof ", inputSchema, ">);")
 
 	if len(route.pathVars) == 0 {
 		g.P("    const url = `${this.baseUrl}", route.serveMuxPath, "`;")
@@ -566,10 +674,10 @@ func generateTSStreamingMethod(g *protogen.GeneratedFile, route routeInfo, metho
 	g.P("      this.fetch,")
 	g.P("      url,")
 	g.P("      \"", route.procedure, "\",")
-	g.P("      toJson(pb.", inputTypeName, "Schema, msg, { registry: this.registry }),")
+	g.P("      toJson(", inputSchema, ", msg, { registry: this.registry }),")
 	g.P("      { ...this.headers, ...options.headers },")
 	g.P("      options.signal,")
-	g.P("      (data) => fromJson(pb.", outputTypeName, "Schema, JSON.parse(data), { registry: this.registry }),")
+	g.P("      (data) => fromJson(", outputSchema, ", JSON.parse(data), { registry: this.registry }),")
 	g.P("    );")
 	g.P("  }")
 	g.P()
