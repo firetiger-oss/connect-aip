@@ -186,14 +186,13 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
     const msg = create(pb.CreateResourceRequestSchema, request as MessageInitShape<typeof pb.CreateResourceRequestSchema>);
     const url = `${this.baseUrl}/v1/resources`;
 
+    const reqHeaders = new Headers(this.headers);
+    if (options.headers) new Headers(options.headers).forEach((v, k) => reqHeaders.set(k, v));
+    reqHeaders.set("Content-Type", "application/json");
+    reqHeaders.set("Accept", "application/json");
     const response = await this.fetch(url, {
       method: "POST",
-      headers: {
-        ...this.headers,
-        ...options.headers,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
+      headers: reqHeaders,
       body: JSON.stringify(toJson(pb.CreateResourceRequestSchema, msg, { registry: this.registry })),
       signal: options.signal,
     });
@@ -218,13 +217,12 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
     const queryString = params.toString();
     const finalUrl = queryString ? `${url}?${queryString}` : url;
 
+    const reqHeaders = new Headers(this.headers);
+    if (options.headers) new Headers(options.headers).forEach((v, k) => reqHeaders.set(k, v));
+    reqHeaders.set("Accept", "application/json");
     const response = await this.fetch(finalUrl, {
       method: "GET",
-      headers: {
-        ...this.headers,
-        ...options.headers,
-        Accept: "application/json",
-      },
+      headers: reqHeaders,
       signal: options.signal,
     });
 
@@ -244,14 +242,13 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
     let url = `${this.baseUrl}/v1/resources/{name}`;
     url = url.replace("{name}", (request.resource?.name ?? "").replace("resources/", ""));
 
+    const reqHeaders = new Headers(this.headers);
+    if (options.headers) new Headers(options.headers).forEach((v, k) => reqHeaders.set(k, v));
+    reqHeaders.set("Content-Type", "application/json");
+    reqHeaders.set("Accept", "application/json");
     const response = await this.fetch(url, {
       method: "PATCH",
-      headers: {
-        ...this.headers,
-        ...options.headers,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
+      headers: reqHeaders,
       body: JSON.stringify(toJson(pb.UpdateResourceRequestSchema, msg, { registry: this.registry })),
       signal: options.signal,
     });
@@ -279,13 +276,12 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
     const queryString = params.toString();
     const finalUrl = queryString ? `${url}?${queryString}` : url;
 
+    const reqHeaders = new Headers(this.headers);
+    if (options.headers) new Headers(options.headers).forEach((v, k) => reqHeaders.set(k, v));
+    reqHeaders.set("Accept", "application/json");
     const response = await this.fetch(finalUrl, {
       method: "GET",
-      headers: {
-        ...this.headers,
-        ...options.headers,
-        Accept: "application/json",
-      },
+      headers: reqHeaders,
       signal: options.signal,
     });
 
@@ -310,13 +306,12 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
     const queryString = params.toString();
     const finalUrl = queryString ? `${url}?${queryString}` : url;
 
+    const reqHeaders = new Headers(this.headers);
+    if (options.headers) new Headers(options.headers).forEach((v, k) => reqHeaders.set(k, v));
+    reqHeaders.set("Accept", "application/json");
     const response = await this.fetch(finalUrl, {
       method: "GET",
-      headers: {
-        ...this.headers,
-        ...options.headers,
-        Accept: "application/json",
-      },
+      headers: reqHeaders,
       signal: options.signal,
     });
 
@@ -334,12 +329,14 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
   ): AsyncGenerator<pb.CreateResourceResponse> {
     const msg = create(pb.CreateResourceRequestSchema, request as MessageInitShape<typeof pb.CreateResourceRequestSchema>);
     const url = `${this.baseUrl}/v1/resources:stream`;
+    const sseHeaders = new Headers(this.headers);
+    if (options.headers) new Headers(options.headers).forEach((v, k) => sseHeaders.set(k, v));
     yield* streamSSE(
       this.fetch,
       url,
       "/connectaip.test.v1.TestService/StreamResources",
       toJson(pb.CreateResourceRequestSchema, msg, { registry: this.registry }),
-      { ...this.headers, ...options.headers },
+      sseHeaders,
       options.signal,
       (data) => fromJson(pb.CreateResourceResponseSchema, JSON.parse(data), { registry: this.registry }),
     );
@@ -357,13 +354,12 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
     const queryString = params.toString();
     const finalUrl = queryString ? `${url}?${queryString}` : url;
 
+    const reqHeaders = new Headers(this.headers);
+    if (options.headers) new Headers(options.headers).forEach((v, k) => reqHeaders.set(k, v));
+    reqHeaders.set("Accept", "application/json");
     const response = await this.fetch(finalUrl, {
       method: "DELETE",
-      headers: {
-        ...this.headers,
-        ...options.headers,
-        Accept: "application/json",
-      },
+      headers: reqHeaders,
       signal: options.signal,
     });
 
@@ -404,13 +400,12 @@ export class MixedCoverageServiceAIPClient {
     const queryString = params.toString();
     const finalUrl = queryString ? `${url}?${queryString}` : url;
 
+    const reqHeaders = new Headers(this.headers);
+    if (options.headers) new Headers(options.headers).forEach((v, k) => reqHeaders.set(k, v));
+    reqHeaders.set("Accept", "application/json");
     const response = await this.fetch(finalUrl, {
       method: "GET",
-      headers: {
-        ...this.headers,
-        ...options.headers,
-        Accept: "application/json",
-      },
+      headers: reqHeaders,
       signal: options.signal,
     });
 
