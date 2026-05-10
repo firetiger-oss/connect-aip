@@ -90,7 +90,35 @@ func TestPyTypeResolverAliasUniqueness(t *testing.T) {
 	}
 }
 
+// TestPyTypeResolverNestedGoogleProtobuf pins codex review round 3 [P2]:
+// `google/protobuf/compiler/plugin.proto` is NOT a top-level WKT — its Python
+// module is `google.protobuf.compiler.plugin_pb2`, not `google.protobuf.plugin_pb2`.
+// A naive prefix check that treats any `google/protobuf/**` as a WKT would emit
+// `from google.protobuf import plugin_pb2` and the import would fail at runtime.
+func TestPyTypeResolverNestedGoogleProtobuf(t *testing.T) {
+	const localFile = "myapp/v1/svc.proto"
+
+	r := newPyTypeResolverForPath(localFile)
+	r.registerSource("google/protobuf/compiler/plugin.proto", "CodeGeneratorRequest")
+
+	got := r.resolveSource("google/protobuf/compiler/plugin.proto", "CodeGeneratorRequest")
+	if got != "plugin_pb2.CodeGeneratorRequest" {
+		t.Errorf("nested google.protobuf type resolved to %q; want plugin_pb2.CodeGeneratorRequest", got)
+	}
+
+	wantImports := []string{
+		`import google.protobuf.compiler.plugin_pb2 as plugin_pb2`,
+	}
+	if got := r.importLines(); !slices.Equal(got, wantImports) {
+		t.Errorf("importLines() = %q; want %q (nested google/protobuf/** must NOT be treated as a top-level WKT)", got, wantImports)
+	}
+}
+
 // TestPyTypeResolverWKTCollidesWithCustomProto pins codex review [P2]: a
+// non-WKT proto whose basename matches a WKT (e.g. a custom `empty.proto`
+// alongside `google.protobuf.Empty`) must NOT collapse onto the WKT's
+// `empty_pb2` identifier. The WKT keeps its canonical name (Python convention)
+// and the custom proto is renamed.
 // non-WKT proto whose basename matches a WKT (e.g. a custom `empty.proto`
 // alongside `google.protobuf.Empty`) must NOT collapse onto the WKT's
 // `empty_pb2` identifier. The WKT keeps its canonical name (Python convention)

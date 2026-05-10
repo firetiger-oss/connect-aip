@@ -286,8 +286,17 @@ func (r *pyTypeResolver) importLines() []string {
 	return lines
 }
 
+// isWellKnownProtoFile reports whether `path` is a top-level Google well-known
+// type — i.e., a `.proto` directly under `google/protobuf/` with no further
+// nesting. Nested files like `google/protobuf/compiler/plugin.proto` are NOT
+// WKTs: their Python module is `google.protobuf.compiler.plugin_pb2`, not
+// `google.protobuf.plugin_pb2`, and must be treated as regular cross-file imports.
 func isWellKnownProtoFile(path string) bool {
-	return strings.HasPrefix(path, "google/protobuf/")
+	rel, ok := strings.CutPrefix(path, "google/protobuf/")
+	if !ok {
+		return false
+	}
+	return !strings.Contains(rel, "/")
 }
 
 func getHTTPRule(method *protogen.Method) *annotations.HttpRule {

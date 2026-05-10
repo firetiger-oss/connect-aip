@@ -124,3 +124,29 @@ func TestTSTypeResolverAliasUniqueness(t *testing.T) {
 		t.Errorf("bar type = %q; want common_pb_1.BarThing", barType)
 	}
 }
+
+// TestTSTypeResolverNestedGoogleProtobuf pins codex review round 3 [P2]:
+// `google/protobuf/compiler/plugin.proto` is NOT a top-level WKT — types like
+// `CodeGeneratorRequest` are not exported by `@bufbuild/protobuf/wkt`. A naive
+// prefix check would emit `import { CodeGeneratorRequest, CodeGeneratorRequestSchema }
+// from "@bufbuild/protobuf/wkt"` and TypeScript would fail to resolve. Instead,
+// the file should be treated as a regular cross-file proto with a relative
+// import path.
+func TestTSTypeResolverNestedGoogleProtobuf(t *testing.T) {
+	const localFile = "myapp/v1/svc.proto"
+
+	r := newTSTypeResolverForPath(localFile)
+	r.registerSource("google/protobuf/compiler/plugin.proto", "CodeGeneratorRequest")
+
+	gotType, gotSc := r.resolveSource("google/protobuf/compiler/plugin.proto", "CodeGeneratorRequest")
+	if gotType != "plugin_pb.CodeGeneratorRequest" || gotSc != "plugin_pb.CodeGeneratorRequestSchema" {
+		t.Errorf("nested google.protobuf type resolved to (%q, %q); want (plugin_pb.CodeGeneratorRequest, plugin_pb.CodeGeneratorRequestSchema)", gotType, gotSc)
+	}
+
+	wantImports := []string{
+		`import * as plugin_pb from "../../google/protobuf/compiler/plugin_pb";`,
+	}
+	if got := r.importLines(); !slices.Equal(got, wantImports) {
+		t.Errorf("importLines() = %q; want %q (nested google/protobuf/** must NOT be imported from @bufbuild/protobuf/wkt)", got, wantImports)
+	}
+}
