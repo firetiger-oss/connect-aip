@@ -97,17 +97,6 @@ func handleTestServiceDeleteResource(connectHandler http.Handler) http.Handler {
 	})
 }
 
-// TestServiceAIPClient is a AIP client for TestService.
-type TestServiceAIPClient interface {
-	CreateResource(ctx context.Context, req *testv1.CreateResourceRequest) (*testv1.CreateResourceResponse, error)
-	GetResource(ctx context.Context, req *testv1.GetResourceRequest) (*testv1.GetResourceResponse, error)
-	UpdateResource(ctx context.Context, req *testv1.UpdateResourceRequest) (*testv1.UpdateResourceResponse, error)
-	ListResources(ctx context.Context, req *testv1.ListResourcesRequest) (*testv1.ListResourcesResponse, error)
-	ListVersions(ctx context.Context, req *testv1.ListVersionsRequest) (*testv1.ListVersionsResponse, error)
-	StreamResources(ctx context.Context, req *connect.Request[testv1.CreateResourceRequest]) (*connect.ServerStreamForClient[testv1.CreateResourceResponse], error)
-	DeleteResource(ctx context.Context, req *testv1.DeleteResourceRequest) (*emptypb.Empty, error)
-}
-
 type testServiceAIPClient struct {
 	createResource  *connectaip.Client[testv1.CreateResourceRequest, testv1.CreateResourceResponse]
 	getResource     *connectaip.Client[testv1.GetResourceRequest, testv1.GetResourceResponse]
@@ -119,7 +108,9 @@ type testServiceAIPClient struct {
 }
 
 // NewTestServiceAIPClient creates a new AIP client for TestService.
-func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) TestServiceAIPClient {
+// The returned client satisfies the standard TestServiceClient interface,
+// so it can be used as a drop-in replacement for NewTestServiceClient.
+func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) TestServiceClient {
 	return &testServiceAIPClient{
 		createResource: connectaip.NewClient[testv1.CreateResourceRequest, testv1.CreateResourceResponse](
 			httpClient, baseURL,
@@ -250,30 +241,30 @@ func TestServiceListVersionsQuery(req *testv1.ListVersionsRequest) map[string]st
 	return result
 }
 
-func (c *testServiceAIPClient) CreateResource(ctx context.Context, req *testv1.CreateResourceRequest) (*testv1.CreateResourceResponse, error) {
-	return c.createResource.Call(ctx, req)
+func (c *testServiceAIPClient) CreateResource(ctx context.Context, req *connect.Request[testv1.CreateResourceRequest]) (*connect.Response[testv1.CreateResourceResponse], error) {
+	return c.createResource.CallRequest(ctx, req)
 }
 
-func (c *testServiceAIPClient) GetResource(ctx context.Context, req *testv1.GetResourceRequest) (*testv1.GetResourceResponse, error) {
-	return c.getResource.Call(ctx, req)
+func (c *testServiceAIPClient) GetResource(ctx context.Context, req *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error) {
+	return c.getResource.CallRequest(ctx, req)
 }
 
-func (c *testServiceAIPClient) UpdateResource(ctx context.Context, req *testv1.UpdateResourceRequest) (*testv1.UpdateResourceResponse, error) {
-	return c.updateResource.Call(ctx, req)
+func (c *testServiceAIPClient) UpdateResource(ctx context.Context, req *connect.Request[testv1.UpdateResourceRequest]) (*connect.Response[testv1.UpdateResourceResponse], error) {
+	return c.updateResource.CallRequest(ctx, req)
 }
 
-func (c *testServiceAIPClient) ListResources(ctx context.Context, req *testv1.ListResourcesRequest) (*testv1.ListResourcesResponse, error) {
-	return c.listResources.Call(ctx, req)
+func (c *testServiceAIPClient) ListResources(ctx context.Context, req *connect.Request[testv1.ListResourcesRequest]) (*connect.Response[testv1.ListResourcesResponse], error) {
+	return c.listResources.CallRequest(ctx, req)
 }
 
-func (c *testServiceAIPClient) ListVersions(ctx context.Context, req *testv1.ListVersionsRequest) (*testv1.ListVersionsResponse, error) {
-	return c.listVersions.Call(ctx, req)
+func (c *testServiceAIPClient) ListVersions(ctx context.Context, req *connect.Request[testv1.ListVersionsRequest]) (*connect.Response[testv1.ListVersionsResponse], error) {
+	return c.listVersions.CallRequest(ctx, req)
 }
 
 func (c *testServiceAIPClient) StreamResources(ctx context.Context, req *connect.Request[testv1.CreateResourceRequest]) (*connect.ServerStreamForClient[testv1.CreateResourceResponse], error) {
 	return c.streamResources.CallServerStream(ctx, req)
 }
 
-func (c *testServiceAIPClient) DeleteResource(ctx context.Context, req *testv1.DeleteResourceRequest) (*emptypb.Empty, error) {
-	return c.deleteResource.Call(ctx, req)
+func (c *testServiceAIPClient) DeleteResource(ctx context.Context, req *connect.Request[testv1.DeleteResourceRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.deleteResource.CallRequest(ctx, req)
 }

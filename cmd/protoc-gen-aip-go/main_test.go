@@ -67,10 +67,36 @@ func TestUnaryHandlersUseConnectaipForward(t *testing.T) {
 		`connectaip.Forward[*testv1.CreateResourceRequest, *testv1.CreateResourceResponse]`,
 		`connectaip.ForwardWithBody[*testv1.GetResourceRequest, *testv1.GetResourceResponse]`,
 		`NewTestServiceAIPHandler`,
-		`TestServiceAIPClient`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("fixture missing %q", want)
+		}
+	}
+}
+
+// TestClientImplementsStandardInterface verifies the AIP client constructor
+// returns the standard {Service}Client interface (not a separate AIP-specific
+// interface), and that unary methods take *connect.Request[T] and return
+// *connect.Response[T] so the impl satisfies the standard interface.
+func TestClientImplementsStandardInterface(t *testing.T) {
+	content := readFixture(t)
+
+	for _, want := range []string{
+		`func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) TestServiceClient`,
+		`func (c *testServiceAIPClient) CreateResource(ctx context.Context, req *connect.Request[testv1.CreateResourceRequest]) (*connect.Response[testv1.CreateResourceResponse], error)`,
+		`return c.createResource.CallRequest(ctx, req)`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("fixture missing %q — AIP client must satisfy the standard {Service}Client interface", want)
+		}
+	}
+
+	for _, banned := range []string{
+		`type TestServiceAIPClient interface`,
+		`TestServiceAIPClient is a AIP client`,
+	} {
+		if strings.Contains(content, banned) {
+			t.Errorf("fixture contains banned token %q — the separate AIP client interface was removed", banned)
 		}
 	}
 }
@@ -107,7 +133,7 @@ func TestUnaryHandlerWithExternalReturnType(t *testing.T) {
 	for _, want := range []string{
 		`emptypb "google.golang.org/protobuf/types/known/emptypb"`,
 		`*testv1.DeleteResourceRequest, *emptypb.Empty`,
-		`DeleteResource(ctx context.Context, req *testv1.DeleteResourceRequest) (*emptypb.Empty, error)`,
+		`DeleteResource(ctx context.Context, req *connect.Request[testv1.DeleteResourceRequest]) (*connect.Response[emptypb.Empty], error)`,
 		`*connectaip.Client[testv1.DeleteResourceRequest, emptypb.Empty]`,
 	} {
 		if !strings.Contains(content, want) {

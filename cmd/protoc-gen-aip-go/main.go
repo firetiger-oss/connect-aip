@@ -1115,22 +1115,11 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 
 	serviceName := service.GoName
 	clientName := serviceName + "AIPClient"
-	interfaceName := clientName
-
-	// Generate interface
-	g.P("// ", interfaceName, " is a AIP client for ", serviceName, ".")
-	g.P("type ", interfaceName, " interface {")
-	for _, route := range routes {
-		inputType := qualifiedTypeName(g, route.inputType.GoIdent, pkgAlias, protoImportPath)
-		outputType := qualifiedTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
-		if route.isServerStreaming {
-			g.P("\t", route.rpcMethod, "(ctx context.Context, req *connect.Request[", inputType, "]) (*connect.ServerStreamForClient[", outputType, "], error)")
-		} else {
-			g.P("\t", route.rpcMethod, "(ctx context.Context, req *", inputType, ") (*", outputType, ", error)")
-		}
-	}
-	g.P("}")
-	g.P()
+	// The AIP client implementation satisfies the standard {Service}Client
+	// interface emitted by protoc-gen-connect-go (which lives in the same
+	// generated package), so callers can drop it in wherever they currently
+	// use NewServiceClient.
+	clientInterface := serviceName + "Client"
 
 	// Generate implementation struct
 	implName := strings.ToLower(serviceName[:1]) + serviceName[1:] + "AIPClient"
@@ -1150,7 +1139,9 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 
 	// Generate constructor
 	g.P("// New", clientName, " creates a new AIP client for ", serviceName, ".")
-	g.P("func New", clientName, "(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) ", interfaceName, " {")
+	g.P("// The returned client satisfies the standard ", clientInterface, " interface,")
+	g.P("// so it can be used as a drop-in replacement for New", clientInterface, ".")
+	g.P("func New", clientName, "(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) ", clientInterface, " {")
 	g.P("\treturn &", implName, "{")
 	for _, route := range routes {
 		fieldName := strings.ToLower(route.rpcMethod[:1]) + route.rpcMethod[1:]
@@ -1247,6 +1238,8 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 }
 
 // generateClientMethod generates a single client method (one-line delegation).
+// Method signatures match the standard {Service}Client interface from
+// protoc-gen-connect-go so the AIP client is assignable to it.
 func generateClientMethod(g *protogen.GeneratedFile, implName string, route routeInfo, pkgAlias, protoImportPath string) {
 	fieldName := strings.ToLower(route.rpcMethod[:1]) + route.rpcMethod[1:]
 
@@ -1263,8 +1256,8 @@ func generateClientMethod(g *protogen.GeneratedFile, implName string, route rout
 	inputType := qualifiedTypeName(g, route.inputType.GoIdent, pkgAlias, protoImportPath)
 	outputType := qualifiedTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
 
-	g.P("func (c *", implName, ") ", route.rpcMethod, "(ctx context.Context, req *", inputType, ") (*", outputType, ", error) {")
-	g.P("\treturn c.", fieldName, ".Call(ctx, req)")
+	g.P("func (c *", implName, ") ", route.rpcMethod, "(ctx context.Context, req *connect.Request[", inputType, "]) (*connect.Response[", outputType, "], error) {")
+	g.P("\treturn c.", fieldName, ".CallRequest(ctx, req)")
 	g.P("}")
 	g.P()
 }

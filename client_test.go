@@ -513,3 +513,86 @@ func containsAt(s, substr string, start int) bool {
 	}
 	return false
 }
+
+func TestCallRequestPropagatesHeaders(t *testing.T) {
+	var gotAuth, gotXRequestID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotXRequestID = r.Header.Get("X-Request-Id")
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Server-Trace", "trace-abc")
+		json.NewEncoder(w).Encode(testResponse{ID: "ok"})
+	}))
+	defer server.Close()
+
+	client := NewClient[testRequest, testResponse](
+		server.Client(),
+		server.URL,
+		MethodSpec{
+			HTTPMethod: "GET",
+			URLPattern: "/v1/items",
+		},
+		nil,
+		nil,
+	)
+
+	req := connect.NewRequest(&testRequest{})
+	req.Header().Set("Authorization", "Bearer test-token")
+	req.Header().Set("X-Request-Id", "req-123")
+
+	resp, err := client.CallRequest(t.Context(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotAuth != "Bearer test-token" {
+		t.Errorf("expected Authorization header propagated, got %q", gotAuth)
+	}
+	if gotXRequestID != "req-123" {
+		t.Errorf("expected X-Request-Id propagated, got %q", gotXRequestID)
+	}
+	if got := resp.Header().Get("X-Server-Trace"); got != "trace-abc" {
+		t.Errorf("expected response header X-Server-Trace=trace-abc, got %q", got)
+	}
+	if resp.Msg.ID != "ok" {
+		t.Errorf("expected ID ok, got %s", resp.Msg.ID)
+	}
+}
+
+// TestCallRequestStaticAndPerCallHeaders verifies that per-call headers from
+// connect.Request take precedence over static WithHeader values for the same key.
+func TestCallRequestStaticAndPerCallHeaders(t *testing.T) {
+	var gotAuth, gotStatic string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotStatic = r.Header.Get("X-Static")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(testResponse{ID: "ok"})
+	}))
+	defer server.Close()
+
+	client := NewClient[testRequest, testResponse](
+		server.Client(),
+		server.URL,
+		MethodSpec{
+			HTTPMethod: "GET",
+			URLPattern: "/v1/items",
+		},
+		nil,
+		nil,
+		WithHeader("Authorization", "Bearer static-token"),
+		WithHeader("X-Static", "static-value"),
+	)
+
+	req := connect.NewRequest(&testRequest{})
+	req.Header().Set("Authorization", "Bearer per-call-token")
+
+	if _, err := client.CallRequest(t.Context(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotAuth != "Bearer per-call-token" {
+		t.Errorf("expected per-call Authorization to win, got %q", gotAuth)
+	}
+	if gotStatic != "static-value" {
+		t.Errorf("expected static X-Static to be sent when not overridden, got %q", gotStatic)
+	}
+}

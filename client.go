@@ -223,10 +223,27 @@ func NewClient[Req, Resp any](
 	return c
 }
 
-// Call executes the REST request.
+// Call executes the REST request and returns the response message. Convenience
+// wrapper around CallRequest for callers that don't need per-call headers or
+// connect.Response wrapping.
 func (c *Client[Req, Resp]) Call(ctx context.Context, req *Req) (*Resp, error) {
-	urlPath := c.spec.URLPattern
+	resp, err := c.CallRequest(ctx, connect.NewRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg, nil
+}
 
+// CallRequest executes the REST request, propagating headers from connectReq onto
+// the outgoing HTTP request and populating response headers on the returned
+// connect.Response. Static headers from WithHeader are applied first, then
+// per-call headers from connectReq override them. Interceptors registered via
+// WithInterceptors run with full visibility into the connect.Request.
+func (c *Client[Req, Resp]) CallRequest(ctx context.Context, connectReq *connect.Request[Req]) (*connect.Response[Resp], error) {
+	setRequestIsClient(connectReq)
+	req := connectReq.Msg
+
+	urlPath := c.spec.URLPattern
 	if c.pathVarFn != nil {
 		pathVars := c.pathVarFn(req)
 		for _, pv := range c.spec.PathVars {
@@ -257,6 +274,7 @@ func (c *Client[Req, Resp]) Call(ctx context.Context, req *Req) (*Resp, error) {
 	}
 
 	var body io.Reader
+	hasBody := false
 	// Only send body for POST/PATCH/PUT when queryFn is nil (body-based route).
 	// When queryFn is provided, fields are sent as query params instead.
 	if c.queryFn == nil && (c.spec.HTTPMethod == "POST" || c.spec.HTTPMethod == "PATCH" || c.spec.HTTPMethod == "PUT") {
@@ -271,6 +289,7 @@ func (c *Client[Req, Resp]) Call(ctx context.Context, req *Req) (*Resp, error) {
 			return nil, fmt.Errorf("marshaling request: %w", err)
 		}
 		body = bytes.NewReader(data)
+		hasBody = true
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, c.spec.HTTPMethod, fullURL, body)
@@ -278,44 +297,35 @@ func (c *Client[Req, Resp]) Call(ctx context.Context, req *Req) (*Resp, error) {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
-	httpReq.Header.Set("Accept", "application/json")
-	if body != nil {
-		httpReq.Header.Set("Content-Type", "application/json")
+	// Compose headers on the connect.Request so interceptors see the full set.
+	// Static WithHeader values fill in defaults; existing connectReq headers win.
+	if connectReq.Header().Get("Accept") == "" {
+		connectReq.Header().Set("Accept", "application/json")
 	}
-
+	if hasBody && connectReq.Header().Get("Content-Type") == "" {
+		connectReq.Header().Set("Content-Type", "application/json")
+	}
 	for k, v := range c.opts.headers {
-		httpReq.Header.Set(k, v)
-	}
-
-	if len(c.opts.interceptors) > 0 {
-		return callWithInterceptors[Req, Resp](ctx, c.httpClient, httpReq, req, c.opts.interceptors)
-	}
-	return doHTTPCall[Resp](c.httpClient, httpReq)
-}
-
-// callWithInterceptors creates a connect.Request, runs interceptors, copies
-// modified headers back to the HTTP request, then executes.
-func callWithInterceptors[Req, Resp any](ctx context.Context, httpClient connect.HTTPClient, httpReq *http.Request, req *Req, interceptors []connect.UnaryInterceptorFunc) (*Resp, error) {
-	connectReq := connect.NewRequest(req)
-	setRequestIsClient(connectReq)
-	for k, vs := range httpReq.Header {
-		for _, v := range vs {
-			connectReq.Header().Add(k, v)
+		if connectReq.Header().Get(k) == "" {
+			connectReq.Header().Set(k, v)
 		}
 	}
 
+	httpClient := c.httpClient
 	next := connect.UnaryFunc(func(ctx context.Context, anyReq connect.AnyRequest) (connect.AnyResponse, error) {
 		httpReq = httpReq.WithContext(ctx)
 		httpReq.Header = anyReq.Header().Clone()
-		result, err := doHTTPCall[Resp](httpClient, httpReq)
-		if err != nil {
-			return nil, err
+		msg, respHeader, callErr := doHTTPCall[Resp](httpClient, httpReq)
+		if callErr != nil {
+			return nil, callErr
 		}
-		return connect.NewResponse(result), nil
+		out := connect.NewResponse(msg)
+		copyHeader(out.Header(), respHeader)
+		return out, nil
 	})
 
-	for i := len(interceptors) - 1; i >= 0; i-- {
-		next = interceptors[i](next)
+	for i := len(c.opts.interceptors) - 1; i >= 0; i-- {
+		next = c.opts.interceptors[i](next)
 	}
 
 	anyResp, err := next(ctx, connectReq)
@@ -326,7 +336,15 @@ func callWithInterceptors[Req, Resp any](ctx context.Context, httpClient connect
 	if !ok {
 		return nil, fmt.Errorf("unexpected response type %T", anyResp)
 	}
-	return resp.Msg, nil
+	return resp, nil
+}
+
+func copyHeader(dst, src http.Header) {
+	for k, vs := range src {
+		for _, v := range vs {
+			dst.Add(k, v)
+		}
+	}
 }
 
 // setRequestIsClient sets Spec().IsClient = true on a connect.Request via unsafe
@@ -342,34 +360,34 @@ func setRequestIsClient[T any](req *connect.Request[T]) {
 	spec.IsClient = true
 }
 
-func doHTTPCall[Resp any](httpClient connect.HTTPClient, httpReq *http.Request) (*Resp, error) {
+func doHTTPCall[Resp any](httpClient connect.HTTPClient, httpReq *http.Request) (*Resp, http.Header, error) {
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
+		return nil, nil, fmt.Errorf("executing request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, parseErrorResponse(resp.StatusCode, respBody)
+		return nil, resp.Header, parseErrorResponse(resp.StatusCode, respBody)
 	}
 
 	var result Resp
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
+		return nil, resp.Header, fmt.Errorf("reading response: %w", err)
 	}
 	if pm, ok := any(&result).(proto.Message); ok {
 		if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(respBody, pm); err != nil {
-			return nil, fmt.Errorf("decoding response: %w", err)
+			return nil, resp.Header, fmt.Errorf("decoding response: %w", err)
 		}
 	} else {
 		if err := json.Unmarshal(respBody, &result); err != nil {
-			return nil, fmt.Errorf("decoding response: %w", err)
+			return nil, resp.Header, fmt.Errorf("decoding response: %w", err)
 		}
 	}
 
-	return &result, nil
+	return &result, resp.Header, nil
 }
 
 // parseErrorResponse parses an HTTP error response body into a *connect.Error.
