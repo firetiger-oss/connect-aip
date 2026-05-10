@@ -91,13 +91,16 @@ async function* streamSSE<T>(
   url: string,
   procedure: string,
   message: unknown,
-  headers: Record<string, string>,
+  headers: HeadersInit,
   signal?: AbortSignal,
   parse: (data: string) => T = (d) => JSON.parse(d),
 ): AsyncGenerator<T> {
+  const sseHeaders = new Headers(headers);
+  sseHeaders.set("Content-Type", "application/json");
+  sseHeaders.set("Accept", "text/event-stream");
   const response = await fetchFn(url, {
     method: "POST",
-    headers: { ...headers, "Content-Type": "application/json", Accept: "text/event-stream" },
+    headers: sseHeaders,
     body: JSON.stringify({ procedure, header: { "Content-Type": ["application/connect+json"] }, message }),
     signal,
   });
