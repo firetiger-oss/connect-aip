@@ -60,6 +60,22 @@ service TestService {
   }
 }
 
+// MixedCoverageService has one AIP-annotated RPC and one without an
+// HTTP rule. The AIP plugin must keep emitting a usable client for it
+// without claiming to satisfy the standard {Service}Client interface
+// (which would require implementing every RPC, including the
+// gRPC-only one).
+service MixedCoverageService {
+  rpc AnnotatedMethod(GetResourceRequest) returns (GetResourceResponse) {
+    option (google.api.http) = {
+      get: "/v1/mixed/{name=resources/*}"
+    };
+  }
+
+  // No HTTP rule — gRPC-only path. The AIP plugin filters this out.
+  rpc UnannotatedMethod(GetResourceRequest) returns (GetResourceResponse) {}
+}
+
 message Resource {
   string name = 1;
   string description = 2;

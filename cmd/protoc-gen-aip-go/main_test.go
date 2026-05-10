@@ -101,6 +101,35 @@ func TestClientImplementsStandardInterface(t *testing.T) {
 	}
 }
 
+// TestPartialCoverageEmitsLegacyInterface verifies that when a service has any
+// RPC without an HTTP rule (or otherwise filtered out by the plugin), the
+// generated constructor falls back to a service-scoped {Service}AIPClient
+// interface rather than claiming to satisfy {Service}Client. Without this
+// fallback the generated file would not compile because the impl struct is
+// missing methods the standard interface requires.
+func TestPartialCoverageEmitsLegacyInterface(t *testing.T) {
+	content := readFixture(t)
+
+	for _, want := range []string{
+		`type MixedCoverageServiceAIPClient interface {`,
+		`AnnotatedMethod(ctx context.Context, req *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error)`,
+		`func NewMixedCoverageServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) MixedCoverageServiceAIPClient {`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("fixture missing %q — partial-coverage services must emit a service-scoped AIP interface", want)
+		}
+	}
+
+	for _, banned := range []string{
+		`opts ...connectaip.ClientOption) MixedCoverageServiceClient`,
+		`MixedCoverageServiceAIPClient is a AIP client`,
+	} {
+		if strings.Contains(content, banned) {
+			t.Errorf("fixture contains banned token %q — partial-coverage services must NOT return the standard {Service}Client", banned)
+		}
+	}
+}
+
 // TestNoLegacyRESTSymbols guards against partial REST→AIP renames sneaking
 // back into the codegen. Emitted symbols and filenames must use AIP, never
 // REST. The string "REST" itself is allowed in prose comments since the

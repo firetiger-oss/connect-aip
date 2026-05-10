@@ -1115,13 +1115,34 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 
 	serviceName := service.GoName
 	clientName := serviceName + "AIPClient"
-	// The AIP client implementation satisfies the standard {Service}Client
-	// interface emitted by protoc-gen-connect-go (which lives in the same
-	// generated package), so callers can drop it in wherever they currently
-	// use NewServiceClient.
+	// When every RPC on the service has a usable HTTP rule, the AIP client
+	// is a complete implementation of the standard {Service}Client interface
+	// emitted by protoc-gen-connect-go and we return that directly so callers
+	// can use it as a drop-in replacement. When some RPCs are filtered out
+	// (gRPC-only, client-streaming, unsupported path params), we fall back to
+	// emitting an AIP-specific interface so the generated file still compiles
+	// — partial coverage cannot satisfy the standard interface.
+	allMethodsCovered := len(routes) == len(service.Methods)
 	clientInterface := serviceName + "Client"
+	if !allMethodsCovered {
+		clientInterface = clientName
+		g.P("// ", clientName, " is an AIP client for ", serviceName, ".")
+		g.P("// ", serviceName, " has RPCs without HTTP rules; use the connect-go-generated")
+		g.P("// ", serviceName, "Client (via New", serviceName, "Client) for full coverage.")
+		g.P("type ", clientName, " interface {")
+		for _, route := range routes {
+			inputType := qualifiedTypeName(g, route.inputType.GoIdent, pkgAlias, protoImportPath)
+			outputType := qualifiedTypeName(g, route.outputType.GoIdent, pkgAlias, protoImportPath)
+			if route.isServerStreaming {
+				g.P("\t", route.rpcMethod, "(ctx context.Context, req *connect.Request[", inputType, "]) (*connect.ServerStreamForClient[", outputType, "], error)")
+			} else {
+				g.P("\t", route.rpcMethod, "(ctx context.Context, req *connect.Request[", inputType, "]) (*connect.Response[", outputType, "], error)")
+			}
+		}
+		g.P("}")
+		g.P()
+	}
 
-	// Generate implementation struct
 	implName := strings.ToLower(serviceName[:1]) + serviceName[1:] + "AIPClient"
 	g.P("type ", implName, " struct {")
 	for _, route := range routes {
@@ -1139,8 +1160,10 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 
 	// Generate constructor
 	g.P("// New", clientName, " creates a new AIP client for ", serviceName, ".")
-	g.P("// The returned client satisfies the standard ", clientInterface, " interface,")
-	g.P("// so it can be used as a drop-in replacement for New", clientInterface, ".")
+	if allMethodsCovered {
+		g.P("// The returned client satisfies the standard ", clientInterface, " interface,")
+		g.P("// so it can be used as a drop-in replacement for New", clientInterface, ".")
+	}
 	g.P("func New", clientName, "(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) ", clientInterface, " {")
 	g.P("\treturn &", implName, "{")
 	for _, route := range routes {

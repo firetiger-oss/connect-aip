@@ -184,3 +184,37 @@ class TestServiceAIPClient:
     ) -> empty_pb2.Empty:
         return self._delete_resource.call(request, headers=headers, timeout=timeout)
 
+
+def _annotated_method_path_vars(req: pb2.GetResourceRequest) -> dict[str, str]:
+    return {
+        "{name}": req.name,
+    }
+
+class MixedCoverageServiceAIPClient:
+    """AIP client for MixedCoverageService."""
+
+    def __init__(
+        self,
+        base_url: str,
+        session: httpx.Client,
+        headers: Mapping[str, str] | None = None,
+    ) -> None:
+        self._annotated_method = Client[pb2.GetResourceRequest, pb2.GetResourceResponse](
+            session=session,
+            base_url=base_url,
+            spec=MethodSpec("GET", "/v1/mixed/resources/{name}", [PathVar("{name}", "resources/")]),
+            response_type=pb2.GetResourceResponse,
+            path_var_fn=_annotated_method_path_vars,
+            query_fn=None,
+            headers=headers,
+        )
+
+    def annotated_method(
+        self,
+        request: pb2.GetResourceRequest,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> pb2.GetResourceResponse:
+        return self._annotated_method.call(request, headers=headers, timeout=timeout)
+

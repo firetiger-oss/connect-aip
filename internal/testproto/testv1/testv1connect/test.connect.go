@@ -24,6 +24,8 @@ const _ = connect.IsAtLeastVersion1_13_0
 const (
 	// TestServiceName is the fully-qualified name of the TestService service.
 	TestServiceName = "connectaip.test.v1.TestService"
+	// MixedCoverageServiceName is the fully-qualified name of the MixedCoverageService service.
+	MixedCoverageServiceName = "connectaip.test.v1.MixedCoverageService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -54,6 +56,12 @@ const (
 	// TestServiceDeleteResourceProcedure is the fully-qualified name of the TestService's
 	// DeleteResource RPC.
 	TestServiceDeleteResourceProcedure = "/connectaip.test.v1.TestService/DeleteResource"
+	// MixedCoverageServiceAnnotatedMethodProcedure is the fully-qualified name of the
+	// MixedCoverageService's AnnotatedMethod RPC.
+	MixedCoverageServiceAnnotatedMethodProcedure = "/connectaip.test.v1.MixedCoverageService/AnnotatedMethod"
+	// MixedCoverageServiceUnannotatedMethodProcedure is the fully-qualified name of the
+	// MixedCoverageService's UnannotatedMethod RPC.
+	MixedCoverageServiceUnannotatedMethodProcedure = "/connectaip.test.v1.MixedCoverageService/UnannotatedMethod"
 )
 
 // TestServiceClient is a client for the connectaip.test.v1.TestService service.
@@ -284,4 +292,103 @@ func (UnimplementedTestServiceHandler) StreamResources(context.Context, *connect
 
 func (UnimplementedTestServiceHandler) DeleteResource(context.Context, *connect.Request[testv1.DeleteResourceRequest]) (*connect.Response[emptypb.Empty], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("connectaip.test.v1.TestService.DeleteResource is not implemented"))
+}
+
+// MixedCoverageServiceClient is a client for the connectaip.test.v1.MixedCoverageService service.
+type MixedCoverageServiceClient interface {
+	AnnotatedMethod(context.Context, *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error)
+	// No HTTP rule — gRPC-only path. The AIP plugin filters this out.
+	UnannotatedMethod(context.Context, *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error)
+}
+
+// NewMixedCoverageServiceClient constructs a client for the connectaip.test.v1.MixedCoverageService
+// service. By default, it uses the Connect protocol with the binary Protobuf Codec, asks for
+// gzipped responses, and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply
+// the connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewMixedCoverageServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) MixedCoverageServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	mixedCoverageServiceMethods := testv1.File_test_proto.Services().ByName("MixedCoverageService").Methods()
+	return &mixedCoverageServiceClient{
+		annotatedMethod: connect.NewClient[testv1.GetResourceRequest, testv1.GetResourceResponse](
+			httpClient,
+			baseURL+MixedCoverageServiceAnnotatedMethodProcedure,
+			connect.WithSchema(mixedCoverageServiceMethods.ByName("AnnotatedMethod")),
+			connect.WithClientOptions(opts...),
+		),
+		unannotatedMethod: connect.NewClient[testv1.GetResourceRequest, testv1.GetResourceResponse](
+			httpClient,
+			baseURL+MixedCoverageServiceUnannotatedMethodProcedure,
+			connect.WithSchema(mixedCoverageServiceMethods.ByName("UnannotatedMethod")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// mixedCoverageServiceClient implements MixedCoverageServiceClient.
+type mixedCoverageServiceClient struct {
+	annotatedMethod   *connect.Client[testv1.GetResourceRequest, testv1.GetResourceResponse]
+	unannotatedMethod *connect.Client[testv1.GetResourceRequest, testv1.GetResourceResponse]
+}
+
+// AnnotatedMethod calls connectaip.test.v1.MixedCoverageService.AnnotatedMethod.
+func (c *mixedCoverageServiceClient) AnnotatedMethod(ctx context.Context, req *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error) {
+	return c.annotatedMethod.CallUnary(ctx, req)
+}
+
+// UnannotatedMethod calls connectaip.test.v1.MixedCoverageService.UnannotatedMethod.
+func (c *mixedCoverageServiceClient) UnannotatedMethod(ctx context.Context, req *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error) {
+	return c.unannotatedMethod.CallUnary(ctx, req)
+}
+
+// MixedCoverageServiceHandler is an implementation of the connectaip.test.v1.MixedCoverageService
+// service.
+type MixedCoverageServiceHandler interface {
+	AnnotatedMethod(context.Context, *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error)
+	// No HTTP rule — gRPC-only path. The AIP plugin filters this out.
+	UnannotatedMethod(context.Context, *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error)
+}
+
+// NewMixedCoverageServiceHandler builds an HTTP handler from the service implementation. It returns
+// the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewMixedCoverageServiceHandler(svc MixedCoverageServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	mixedCoverageServiceMethods := testv1.File_test_proto.Services().ByName("MixedCoverageService").Methods()
+	mixedCoverageServiceAnnotatedMethodHandler := connect.NewUnaryHandler(
+		MixedCoverageServiceAnnotatedMethodProcedure,
+		svc.AnnotatedMethod,
+		connect.WithSchema(mixedCoverageServiceMethods.ByName("AnnotatedMethod")),
+		connect.WithHandlerOptions(opts...),
+	)
+	mixedCoverageServiceUnannotatedMethodHandler := connect.NewUnaryHandler(
+		MixedCoverageServiceUnannotatedMethodProcedure,
+		svc.UnannotatedMethod,
+		connect.WithSchema(mixedCoverageServiceMethods.ByName("UnannotatedMethod")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/connectaip.test.v1.MixedCoverageService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case MixedCoverageServiceAnnotatedMethodProcedure:
+			mixedCoverageServiceAnnotatedMethodHandler.ServeHTTP(w, r)
+		case MixedCoverageServiceUnannotatedMethodProcedure:
+			mixedCoverageServiceUnannotatedMethodHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedMixedCoverageServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedMixedCoverageServiceHandler struct{}
+
+func (UnimplementedMixedCoverageServiceHandler) AnnotatedMethod(context.Context, *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("connectaip.test.v1.MixedCoverageService.AnnotatedMethod is not implemented"))
+}
+
+func (UnimplementedMixedCoverageServiceHandler) UnannotatedMethod(context.Context, *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("connectaip.test.v1.MixedCoverageService.UnannotatedMethod is not implemented"))
 }

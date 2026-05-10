@@ -374,3 +374,50 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
 
 }
 
+// MixedCoverageService has RPCs without HTTP rules; this AIP client only covers
+// the AIP-routable subset, so it does not implement Client<typeof pb.MixedCoverageService>.
+export class MixedCoverageServiceAIPClient {
+  private readonly baseUrl: string;
+  private readonly headers: Record<string, string>;
+  private readonly fetch: typeof fetch;
+  private readonly registry: Registry;
+
+  constructor(baseUrl: string, options: AIPClientOptions) {
+    this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.headers = options.headers ?? {};
+    this.fetch = options.fetch ?? globalThis.fetch;
+    this.registry = options.registry;
+  }
+
+  async annotatedMethod(
+    request: pb.GetResourceRequest | MessageInitShape<typeof pb.GetResourceRequestSchema>,
+    options: CallOptions = {},
+  ): Promise<pb.GetResourceResponse> {
+    const msg = create(pb.GetResourceRequestSchema, request as MessageInitShape<typeof pb.GetResourceRequestSchema>);
+    let url = `${this.baseUrl}/v1/mixed/resources/{name}`;
+    url = url.replace("{name}", (request.name ?? "").replace("resources/", ""));
+
+    const params = new URLSearchParams();
+    const queryString = params.toString();
+    const finalUrl = queryString ? `${url}?${queryString}` : url;
+
+    const response = await this.fetch(finalUrl, {
+      method: "GET",
+      headers: {
+        ...this.headers,
+        ...options.headers,
+        Accept: "application/json",
+      },
+      signal: options.signal,
+    });
+
+    if (!response.ok) {
+      throw await parseErrorResponse(response);
+    }
+
+    const data = await response.json();
+    return fromJsonAny(pb.GetResourceResponseSchema, data, this.registry);
+  }
+
+}
+

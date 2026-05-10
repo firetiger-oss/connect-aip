@@ -47,4 +47,13 @@ func TestTSFixtureInvariants(t *testing.T) {
 			t.Errorf("fixture contains %q — narrow options type was replaced with CallOptions to satisfy Client<T>", banned)
 		}
 	}
+
+	// Partial-coverage service: no `implements Client<...>` clause, since the
+	// AIP class is missing methods the standard interface would require.
+	if !strings.Contains(content, `export class MixedCoverageServiceAIPClient {`) {
+		t.Error("fixture missing plain `export class MixedCoverageServiceAIPClient {` — partial-coverage services must omit the implements clause")
+	}
+	if strings.Contains(content, `MixedCoverageServiceAIPClient implements Client<`) {
+		t.Error("fixture wrongly declares MixedCoverageServiceAIPClient implements Client<...> — that fails tsc because UnannotatedMethod is missing")
+	}
 }

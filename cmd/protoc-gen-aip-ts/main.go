@@ -531,9 +531,19 @@ func generateServiceBody(g *protogen.GeneratedFile, service *protogen.Service, r
 	serviceName := service.GoName
 	className := serviceName + "AIPClient"
 
-	// `implements Client<typeof pb.${Service}>` makes the AIP client a drop-in
-	// replacement for a connect-rpc-web client built via createClient(Service, transport).
-	g.P("export class ", className, " implements Client<typeof pb.", serviceName, "> {")
+	// When every RPC on the service has a usable HTTP rule, we declare
+	// `implements Client<typeof pb.${Service}>` so the AIP client is a true
+	// drop-in for a connect-rpc-web client built via createClient(Service, transport).
+	// Otherwise the class would be missing methods the standard interface
+	// requires; emit a plain class so tsc still accepts the generated file.
+	allMethodsCovered := len(routes) == len(service.Methods)
+	if allMethodsCovered {
+		g.P("export class ", className, " implements Client<typeof pb.", serviceName, "> {")
+	} else {
+		g.P("// ", serviceName, " has RPCs without HTTP rules; this AIP client only covers")
+		g.P("// the AIP-routable subset, so it does not implement Client<typeof pb.", serviceName, ">.")
+		g.P("export class ", className, " {")
+	}
 	g.P("  private readonly baseUrl: string;")
 	g.P("  private readonly headers: Record<string, string>;")
 	g.P("  private readonly fetch: typeof fetch;")

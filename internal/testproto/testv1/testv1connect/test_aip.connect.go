@@ -268,3 +268,69 @@ func (c *testServiceAIPClient) StreamResources(ctx context.Context, req *connect
 func (c *testServiceAIPClient) DeleteResource(ctx context.Context, req *connect.Request[testv1.DeleteResourceRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.deleteResource.CallRequest(ctx, req)
 }
+
+// NewMixedCoverageServiceAIPHandler returns an iterator of (pattern, handler) pairs
+// for registering AIP routes with http.ServeMux using Go 1.22+ patterns.
+// Usage:
+//
+//	for pattern, handler := range NewMixedCoverageServiceAIPHandler(svc, opts...) {
+//	    mux.Handle(pattern, handler)
+//	}
+func NewMixedCoverageServiceAIPHandler(
+	svc MixedCoverageServiceHandler,
+	opts ...connect.HandlerOption,
+) iter.Seq2[string, http.Handler] {
+	_, connectHandler := NewMixedCoverageServiceHandler(svc, opts...)
+
+	return func(yield func(string, http.Handler) bool) {
+		if !yield("GET /v1/mixed/resources/{name}", handleMixedCoverageServiceAnnotatedMethod(connectHandler)) {
+			return
+		}
+	}
+}
+
+func handleMixedCoverageServiceAnnotatedMethod(connectHandler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		connectaip.ForwardWithBody[*testv1.GetResourceRequest, *testv1.GetResourceResponse](w, req, MixedCoverageServiceAnnotatedMethodProcedure, connectHandler, &testv1.GetResourceRequest{Name: "resources/" + req.PathValue("name")})
+	})
+}
+
+// MixedCoverageServiceAIPClient is an AIP client for MixedCoverageService.
+// MixedCoverageService has RPCs without HTTP rules; use the connect-go-generated
+// MixedCoverageServiceClient (via NewMixedCoverageServiceClient) for full coverage.
+type MixedCoverageServiceAIPClient interface {
+	AnnotatedMethod(ctx context.Context, req *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error)
+}
+
+type mixedCoverageServiceAIPClient struct {
+	annotatedMethod *connectaip.Client[testv1.GetResourceRequest, testv1.GetResourceResponse]
+}
+
+// NewMixedCoverageServiceAIPClient creates a new AIP client for MixedCoverageService.
+func NewMixedCoverageServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) MixedCoverageServiceAIPClient {
+	return &mixedCoverageServiceAIPClient{
+		annotatedMethod: connectaip.NewClient[testv1.GetResourceRequest, testv1.GetResourceResponse](
+			httpClient, baseURL,
+			connectaip.MethodSpec{
+				HTTPMethod: "GET",
+				URLPattern: "/v1/mixed/resources/{name}",
+				PathVars: []connectaip.PathVar{
+					{Placeholder: "{name}", Prefix: "resources/"},
+				},
+			},
+			MixedCoverageServiceAnnotatedMethodPathVars,
+			func(*testv1.GetResourceRequest) map[string]string { return nil },
+			opts...,
+		),
+	}
+}
+
+func MixedCoverageServiceAnnotatedMethodPathVars(req *testv1.GetResourceRequest) map[string]string {
+	return map[string]string{
+		"{name}": req.GetName(),
+	}
+}
+
+func (c *mixedCoverageServiceAIPClient) AnnotatedMethod(ctx context.Context, req *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error) {
+	return c.annotatedMethod.CallRequest(ctx, req)
+}
