@@ -217,25 +217,44 @@ type pathVar struct {
 // Local types come from the sibling `<file>_pb` module via the always-present
 // `import * as pb from "./<file>_pb"`. Well-known types (proto file path under
 // `google/protobuf/`) are imported by name from `@bufbuild/protobuf/wkt`. Any
-// other cross-file types get a namespace import alias derived from the source
-// proto file's basename.
+// other cross-file type gets a namespace import alias (uniquified if multiple
+// deps share a basename) and a real relative import path computed from the
+// current file's directory to the dep's directory — so the generated client
+// works regardless of where the dep lives in the proto tree.
 type tsTypeResolver struct {
 	currentFile string
+	currentDir  string
 
 	// wktNames is the set of named imports needed from @bufbuild/protobuf/wkt
 	// (each message contributes both its type name and its <Name>Schema).
 	wktNames map[string]struct{}
 
 	// otherFiles maps a non-local, non-WKT proto file path to its chosen
-	// namespace alias (e.g. "other_pb").
+	// namespace alias (e.g. "other_pb"). Aliases are uniquified across all
+	// registered non-local sources.
 	otherFiles map[string]string
+
+	// usedAliases tracks taken namespace identifiers to avoid collisions when
+	// two different proto files share a basename. Pre-seeded with "pb" since
+	// the always-emitted `import * as pb from "./<file>_pb"` claims it.
+	usedAliases map[string]struct{}
 }
 
 func newTSTypeResolver(file *protogen.File) *tsTypeResolver {
+	return newTSTypeResolverForPath(string(file.Desc.Path()))
+}
+
+func newTSTypeResolverForPath(currentFile string) *tsTypeResolver {
+	var dir string
+	if slash := strings.LastIndex(currentFile, "/"); slash >= 0 {
+		dir = currentFile[:slash]
+	}
 	return &tsTypeResolver{
-		currentFile: string(file.Desc.Path()),
+		currentFile: currentFile,
+		currentDir:  dir,
 		wktNames:    map[string]struct{}{},
 		otherFiles:  map[string]string{},
+		usedAliases: map[string]struct{}{"pb": {}},
 	}
 }
 
@@ -256,7 +275,15 @@ func (r *tsTypeResolver) registerSource(source, name string) {
 		return
 	}
 	base := strings.TrimSuffix(source[strings.LastIndex(source, "/")+1:], ".proto")
-	r.otherFiles[source] = base + "_pb"
+	alias := base + "_pb"
+	for n := 1; ; n++ {
+		if _, taken := r.usedAliases[alias]; !taken {
+			break
+		}
+		alias = fmt.Sprintf("%s_pb_%d", base, n)
+	}
+	r.otherFiles[source] = alias
+	r.usedAliases[alias] = struct{}{}
 }
 
 func (r *tsTypeResolver) resolve(msg *protogen.Message) (typeName, schemaName string) {
@@ -276,7 +303,8 @@ func (r *tsTypeResolver) resolveSource(source, name string) (typeName, schemaNam
 
 // importLines returns extra `import` statements (excluding the always-present
 // local `import * as pb from "./<file>_pb"`), sorted by source for stable
-// output.
+// output. Cross-file paths are computed relative to the current file's
+// directory so the generated client compiles regardless of where the dep lives.
 func (r *tsTypeResolver) importLines() []string {
 	var lines []string
 	if len(r.wktNames) > 0 {
@@ -294,10 +322,38 @@ func (r *tsTypeResolver) importLines() []string {
 	sort.Strings(sources)
 	for _, source := range sources {
 		alias := r.otherFiles[source]
-		base := strings.TrimSuffix(source[strings.LastIndex(source, "/")+1:], ".proto")
-		lines = append(lines, fmt.Sprintf("import * as %s from \"./%s_pb\";", alias, base))
+		target := strings.TrimSuffix(source, ".proto") + "_pb"
+		rel := posixRel(r.currentDir, target)
+		if !strings.HasPrefix(rel, "./") && !strings.HasPrefix(rel, "../") {
+			rel = "./" + rel
+		}
+		lines = append(lines, fmt.Sprintf("import * as %s from \"%s\";", alias, rel))
 	}
 	return lines
+}
+
+// posixRel returns the slash-separated relative path from `from` (a directory)
+// to `to` (a file or directory). Both inputs use POSIX separators with no
+// leading `/`. Empty `from` means the current working dir.
+func posixRel(from, to string) string {
+	if from == "" {
+		return to
+	}
+	fromParts := strings.Split(from, "/")
+	toParts := strings.Split(to, "/")
+	i := 0
+	for i < len(fromParts) && i < len(toParts) && fromParts[i] == toParts[i] {
+		i++
+	}
+	rel := make([]string, 0, len(fromParts)-i+len(toParts)-i)
+	for j := i; j < len(fromParts); j++ {
+		rel = append(rel, "..")
+	}
+	rel = append(rel, toParts[i:]...)
+	if len(rel) == 0 {
+		return "."
+	}
+	return strings.Join(rel, "/")
 }
 
 func isWellKnownProtoFile(path string) bool {

@@ -155,26 +155,39 @@ type pathVar struct {
 // Well-known types (proto file path under `google/protobuf/`) come in via
 // `from google.protobuf import <basename>_pb2` and are referenced as
 // `<basename>_pb2.X`. Any other cross-file type is imported as
-// `import <module>_pb2 as <basename>_pb2` (path mirrors the local
-// proto-path-to-Python-module convention).
+// `import <module>_pb2 as <alias>` (alias starts at `<basename>_pb2` and is
+// uniquified across both WKT base names and other non-local sources, so two
+// deps that share a basename — including a custom `empty.proto` alongside
+// `google.protobuf.Empty` — each get a distinct identifier).
 type pyTypeResolver struct {
 	currentFile string
 
 	// wktBaseNames is the set of basenames (e.g., "empty") needed from
 	// google.protobuf — each contributes a `from google.protobuf import
-	// <name>_pb2` line.
+	// <name>_pb2` line, naming `<name>_pb2` in the file scope.
 	wktBaseNames map[string]struct{}
 
 	// otherFiles maps a non-local, non-WKT proto file path to its chosen
-	// Python module alias (e.g. "other_pb2").
+	// Python module alias (e.g. "other_pb2"). Aliases are uniquified across
+	// `pb2`, every `<wkt_base>_pb2`, and every other non-local source.
 	otherFiles map[string]string
+
+	// usedAliases tracks taken module identifiers in the generated file.
+	// Pre-seeded with "pb2" since the always-emitted local `import ... as pb2`
+	// claims it; WKT base names are added on registration.
+	usedAliases map[string]struct{}
 }
 
 func newPyTypeResolver(file *protogen.File) *pyTypeResolver {
+	return newPyTypeResolverForPath(string(file.Desc.Path()))
+}
+
+func newPyTypeResolverForPath(currentFile string) *pyTypeResolver {
 	return &pyTypeResolver{
-		currentFile:  string(file.Desc.Path()),
+		currentFile:  currentFile,
 		wktBaseNames: map[string]struct{}{},
 		otherFiles:   map[string]string{},
+		usedAliases:  map[string]struct{}{"pb2": {}},
 	}
 }
 
@@ -182,19 +195,34 @@ func (r *pyTypeResolver) register(msg *protogen.Message) {
 	r.registerSource(string(msg.Desc.ParentFile().Path()), string(msg.Desc.Name()))
 }
 
-func (r *pyTypeResolver) registerSource(source, name string) {
+func (r *pyTypeResolver) registerSource(source, _ string) {
 	if source == r.currentFile {
 		return
 	}
 	base := strings.TrimSuffix(source[strings.LastIndex(source, "/")+1:], ".proto")
 	if isWellKnownProtoFile(source) {
+		if _, ok := r.wktBaseNames[base]; ok {
+			return
+		}
 		r.wktBaseNames[base] = struct{}{}
+		// WKT names are fixed by Python convention (`from google.protobuf
+		// import <base>_pb2`) — no renaming. Reserve the identifier so a
+		// later non-WKT source with the same basename gets a unique alias.
+		r.usedAliases[base+"_pb2"] = struct{}{}
 		return
 	}
 	if _, ok := r.otherFiles[source]; ok {
 		return
 	}
-	r.otherFiles[source] = base + "_pb2"
+	alias := base + "_pb2"
+	for n := 1; ; n++ {
+		if _, taken := r.usedAliases[alias]; !taken {
+			break
+		}
+		alias = fmt.Sprintf("%s_pb2_%d", base, n)
+	}
+	r.otherFiles[source] = alias
+	r.usedAliases[alias] = struct{}{}
 }
 
 func (r *pyTypeResolver) resolve(msg *protogen.Message) string {

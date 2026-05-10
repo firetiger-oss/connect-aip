@@ -14,11 +14,7 @@ import (
 func TestPyTypeResolver(t *testing.T) {
 	const localFile = "connectaip/test/v1/test.proto"
 
-	r := &pyTypeResolver{
-		currentFile:  localFile,
-		wktBaseNames: map[string]struct{}{},
-		otherFiles:   map[string]string{},
-	}
+	r := newPyTypeResolverForPath(localFile)
 
 	r.registerSource(localFile, "Resource")
 	r.registerSource("google/protobuf/empty.proto", "Empty")
@@ -52,5 +48,74 @@ func TestPyTypeResolver(t *testing.T) {
 	}
 	if !slices.Equal(gotImports, wantImports) {
 		t.Errorf("importLines() = %q; want %q", gotImports, wantImports)
+	}
+}
+
+// TestPyTypeResolverAliasUniqueness pins codex review [P2]: when two distinct
+// non-local proto files share a basename (foo/v1/common.proto and
+// bar/v1/common.proto), each must get a distinct alias and resolveSource must
+// return the right one for each source. Without the fix both collapsed to
+// `common_pb2`, the import lines would have a duplicate identifier, and at
+// least one resolved type would point at the wrong module.
+func TestPyTypeResolverAliasUniqueness(t *testing.T) {
+	const localFile = "myapp/v1/svc.proto"
+
+	r := newPyTypeResolverForPath(localFile)
+	r.registerSource("foo/v1/common.proto", "FooThing")
+	r.registerSource("bar/v1/common.proto", "BarThing")
+
+	fooType := r.resolveSource("foo/v1/common.proto", "FooThing")
+	barType := r.resolveSource("bar/v1/common.proto", "BarThing")
+
+	if fooType == barType {
+		t.Errorf("foo and bar resolved to the same expression %q — basename collision regressed", fooType)
+	}
+	if fooType != "common_pb2.FooThing" {
+		t.Errorf("foo type = %q; want common_pb2.FooThing", fooType)
+	}
+	if barType != "common_pb2_1.BarThing" {
+		t.Errorf("bar type = %q; want common_pb2_1.BarThing", barType)
+	}
+
+	wantImports := []string{
+		`import bar.v1.common_pb2 as common_pb2_1`,
+		`import foo.v1.common_pb2 as common_pb2`,
+	}
+	if got := r.importLines(); !slices.Equal(got, wantImports) {
+		t.Errorf("importLines() = %q; want %q", got, wantImports)
+	}
+}
+
+// TestPyTypeResolverWKTCollidesWithCustomProto pins codex review [P2]: a
+// non-WKT proto whose basename matches a WKT (e.g. a custom `empty.proto`
+// alongside `google.protobuf.Empty`) must NOT collapse onto the WKT's
+// `empty_pb2` identifier. The WKT keeps its canonical name (Python convention)
+// and the custom proto is renamed.
+func TestPyTypeResolverWKTCollidesWithCustomProto(t *testing.T) {
+	const localFile = "myapp/v1/svc.proto"
+
+	r := newPyTypeResolverForPath(localFile)
+	r.registerSource("google/protobuf/empty.proto", "Empty")
+	r.registerSource("custom/v1/empty.proto", "CustomEmpty")
+
+	wktType := r.resolveSource("google/protobuf/empty.proto", "Empty")
+	customType := r.resolveSource("custom/v1/empty.proto", "CustomEmpty")
+
+	if wktType != "empty_pb2.Empty" {
+		t.Errorf("WKT Empty resolved to %q; want empty_pb2.Empty (Python's canonical name must not be renamed)", wktType)
+	}
+	if customType == wktType {
+		t.Errorf("custom Empty collapsed onto the WKT identifier %q — collision regressed", customType)
+	}
+	if customType != "empty_pb2_1.CustomEmpty" {
+		t.Errorf("custom Empty resolved to %q; want empty_pb2_1.CustomEmpty", customType)
+	}
+
+	wantImports := []string{
+		`from google.protobuf import empty_pb2`,
+		`import custom.v1.empty_pb2 as empty_pb2_1`,
+	}
+	if got := r.importLines(); !slices.Equal(got, wantImports) {
+		t.Errorf("importLines() = %q; want %q", got, wantImports)
 	}
 }
