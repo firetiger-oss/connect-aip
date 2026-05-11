@@ -97,16 +97,11 @@ func handleTestServiceDeleteResource(connectHandler http.Handler) http.Handler {
 	})
 }
 
-// TestServiceAIPClient is a AIP client for TestService.
-type TestServiceAIPClient interface {
-	CreateResource(ctx context.Context, req *testv1.CreateResourceRequest) (*testv1.CreateResourceResponse, error)
-	GetResource(ctx context.Context, req *testv1.GetResourceRequest) (*testv1.GetResourceResponse, error)
-	UpdateResource(ctx context.Context, req *testv1.UpdateResourceRequest) (*testv1.UpdateResourceResponse, error)
-	ListResources(ctx context.Context, req *testv1.ListResourcesRequest) (*testv1.ListResourcesResponse, error)
-	ListVersions(ctx context.Context, req *testv1.ListVersionsRequest) (*testv1.ListVersionsResponse, error)
-	StreamResources(ctx context.Context, req *connect.Request[testv1.CreateResourceRequest]) (*connect.ServerStreamForClient[testv1.CreateResourceResponse], error)
-	DeleteResource(ctx context.Context, req *testv1.DeleteResourceRequest) (*emptypb.Empty, error)
-}
+// TestServiceAIPClient is an alias for the standard TestServiceClient interface.
+// All RPCs on TestService have HTTP rules, so the AIP client is a
+// drop-in replacement for TestServiceClient; this alias is kept for
+// backwards compatibility with code that types variables as TestServiceAIPClient.
+type TestServiceAIPClient = TestServiceClient
 
 type testServiceAIPClient struct {
 	createResource  *connectaip.Client[testv1.CreateResourceRequest, testv1.CreateResourceResponse]
@@ -119,13 +114,16 @@ type testServiceAIPClient struct {
 }
 
 // NewTestServiceAIPClient creates a new AIP client for TestService.
-func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) TestServiceAIPClient {
+// The returned client satisfies the standard TestServiceClient interface,
+// so it can be used as a drop-in replacement for NewTestServiceClient.
+func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) TestServiceClient {
 	return &testServiceAIPClient{
 		createResource: connectaip.NewClient[testv1.CreateResourceRequest, testv1.CreateResourceResponse](
 			httpClient, baseURL,
 			connectaip.MethodSpec{
 				HTTPMethod: "POST",
 				URLPattern: "/v1/resources",
+				Procedure:  TestServiceCreateResourceProcedure,
 			},
 			nil,
 			nil,
@@ -136,6 +134,7 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 			connectaip.MethodSpec{
 				HTTPMethod: "GET",
 				URLPattern: "/v1/resources/{name}",
+				Procedure:  TestServiceGetResourceProcedure,
 				PathVars: []connectaip.PathVar{
 					{Placeholder: "{name}", Prefix: "resources/"},
 				},
@@ -149,6 +148,7 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 			connectaip.MethodSpec{
 				HTTPMethod: "PATCH",
 				URLPattern: "/v1/resources/{name}",
+				Procedure:  TestServiceUpdateResourceProcedure,
 				PathVars: []connectaip.PathVar{
 					{Placeholder: "{name}", Prefix: "resources/"},
 				},
@@ -162,6 +162,7 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 			connectaip.MethodSpec{
 				HTTPMethod: "GET",
 				URLPattern: "/v1/resources",
+				Procedure:  TestServiceListResourcesProcedure,
 			},
 			nil,
 			TestServiceListResourcesQuery,
@@ -172,6 +173,7 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 			connectaip.MethodSpec{
 				HTTPMethod: "GET",
 				URLPattern: "/v1/resources/{name}/versions",
+				Procedure:  TestServiceListVersionsProcedure,
 				PathVars: []connectaip.PathVar{
 					{Placeholder: "{name}", Prefix: "resources/"},
 				},
@@ -190,6 +192,7 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 			connectaip.MethodSpec{
 				HTTPMethod: "DELETE",
 				URLPattern: "/v1/resources/{name}",
+				Procedure:  TestServiceDeleteResourceProcedure,
 				PathVars: []connectaip.PathVar{
 					{Placeholder: "{name}", Prefix: "resources/"},
 				},
@@ -250,30 +253,97 @@ func TestServiceListVersionsQuery(req *testv1.ListVersionsRequest) map[string]st
 	return result
 }
 
-func (c *testServiceAIPClient) CreateResource(ctx context.Context, req *testv1.CreateResourceRequest) (*testv1.CreateResourceResponse, error) {
-	return c.createResource.Call(ctx, req)
+func (c *testServiceAIPClient) CreateResource(ctx context.Context, req *connect.Request[testv1.CreateResourceRequest]) (*connect.Response[testv1.CreateResourceResponse], error) {
+	return c.createResource.CallRequest(ctx, req)
 }
 
-func (c *testServiceAIPClient) GetResource(ctx context.Context, req *testv1.GetResourceRequest) (*testv1.GetResourceResponse, error) {
-	return c.getResource.Call(ctx, req)
+func (c *testServiceAIPClient) GetResource(ctx context.Context, req *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error) {
+	return c.getResource.CallRequest(ctx, req)
 }
 
-func (c *testServiceAIPClient) UpdateResource(ctx context.Context, req *testv1.UpdateResourceRequest) (*testv1.UpdateResourceResponse, error) {
-	return c.updateResource.Call(ctx, req)
+func (c *testServiceAIPClient) UpdateResource(ctx context.Context, req *connect.Request[testv1.UpdateResourceRequest]) (*connect.Response[testv1.UpdateResourceResponse], error) {
+	return c.updateResource.CallRequest(ctx, req)
 }
 
-func (c *testServiceAIPClient) ListResources(ctx context.Context, req *testv1.ListResourcesRequest) (*testv1.ListResourcesResponse, error) {
-	return c.listResources.Call(ctx, req)
+func (c *testServiceAIPClient) ListResources(ctx context.Context, req *connect.Request[testv1.ListResourcesRequest]) (*connect.Response[testv1.ListResourcesResponse], error) {
+	return c.listResources.CallRequest(ctx, req)
 }
 
-func (c *testServiceAIPClient) ListVersions(ctx context.Context, req *testv1.ListVersionsRequest) (*testv1.ListVersionsResponse, error) {
-	return c.listVersions.Call(ctx, req)
+func (c *testServiceAIPClient) ListVersions(ctx context.Context, req *connect.Request[testv1.ListVersionsRequest]) (*connect.Response[testv1.ListVersionsResponse], error) {
+	return c.listVersions.CallRequest(ctx, req)
 }
 
 func (c *testServiceAIPClient) StreamResources(ctx context.Context, req *connect.Request[testv1.CreateResourceRequest]) (*connect.ServerStreamForClient[testv1.CreateResourceResponse], error) {
 	return c.streamResources.CallServerStream(ctx, req)
 }
 
-func (c *testServiceAIPClient) DeleteResource(ctx context.Context, req *testv1.DeleteResourceRequest) (*emptypb.Empty, error) {
-	return c.deleteResource.Call(ctx, req)
+func (c *testServiceAIPClient) DeleteResource(ctx context.Context, req *connect.Request[testv1.DeleteResourceRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.deleteResource.CallRequest(ctx, req)
+}
+
+// NewMixedCoverageServiceAIPHandler returns an iterator of (pattern, handler) pairs
+// for registering AIP routes with http.ServeMux using Go 1.22+ patterns.
+// Usage:
+//
+//	for pattern, handler := range NewMixedCoverageServiceAIPHandler(svc, opts...) {
+//	    mux.Handle(pattern, handler)
+//	}
+func NewMixedCoverageServiceAIPHandler(
+	svc MixedCoverageServiceHandler,
+	opts ...connect.HandlerOption,
+) iter.Seq2[string, http.Handler] {
+	_, connectHandler := NewMixedCoverageServiceHandler(svc, opts...)
+
+	return func(yield func(string, http.Handler) bool) {
+		if !yield("GET /v1/mixed/resources/{name}", handleMixedCoverageServiceAnnotatedMethod(connectHandler)) {
+			return
+		}
+	}
+}
+
+func handleMixedCoverageServiceAnnotatedMethod(connectHandler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		connectaip.ForwardWithBody[*testv1.GetResourceRequest, *testv1.GetResourceResponse](w, req, MixedCoverageServiceAnnotatedMethodProcedure, connectHandler, &testv1.GetResourceRequest{Name: "resources/" + req.PathValue("name")})
+	})
+}
+
+// MixedCoverageServiceAIPClient is an AIP client for MixedCoverageService.
+// MixedCoverageService has RPCs without HTTP rules; use the connect-go-generated
+// MixedCoverageServiceClient (via NewMixedCoverageServiceClient) for full coverage.
+type MixedCoverageServiceAIPClient interface {
+	AnnotatedMethod(ctx context.Context, req *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error)
+}
+
+type mixedCoverageServiceAIPClient struct {
+	annotatedMethod *connectaip.Client[testv1.GetResourceRequest, testv1.GetResourceResponse]
+}
+
+// NewMixedCoverageServiceAIPClient creates a new AIP client for MixedCoverageService.
+func NewMixedCoverageServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) MixedCoverageServiceAIPClient {
+	return &mixedCoverageServiceAIPClient{
+		annotatedMethod: connectaip.NewClient[testv1.GetResourceRequest, testv1.GetResourceResponse](
+			httpClient, baseURL,
+			connectaip.MethodSpec{
+				HTTPMethod: "GET",
+				URLPattern: "/v1/mixed/resources/{name}",
+				Procedure:  MixedCoverageServiceAnnotatedMethodProcedure,
+				PathVars: []connectaip.PathVar{
+					{Placeholder: "{name}", Prefix: "resources/"},
+				},
+			},
+			MixedCoverageServiceAnnotatedMethodPathVars,
+			func(*testv1.GetResourceRequest) map[string]string { return nil },
+			opts...,
+		),
+	}
+}
+
+func MixedCoverageServiceAnnotatedMethodPathVars(req *testv1.GetResourceRequest) map[string]string {
+	return map[string]string{
+		"{name}": req.GetName(),
+	}
+}
+
+func (c *mixedCoverageServiceAIPClient) AnnotatedMethod(ctx context.Context, req *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error) {
+	return c.annotatedMethod.CallRequest(ctx, req)
 }

@@ -9,4 +9,8 @@
 // Most users will not import this package directly; instead, run
 // protoc-gen-aip-go on services with google.api.http annotations and call
 // the generated NewServiceAIPHandler / NewServiceAIPClient constructors.
+// NewServiceAIPClient returns the standard ServiceClient interface emitted
+// by protoc-gen-connect-go, so it is a drop-in replacement for
+// NewServiceClient — including per-request header propagation via
+// connect.Request[T] and connect.Response[T].
 package connectaip

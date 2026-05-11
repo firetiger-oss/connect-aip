@@ -645,7 +645,10 @@ const file_test_proto_rawDesc = "" +
 	"\rListResources\x12(.connectaip.test.v1.ListResourcesRequest\x1a).connectaip.test.v1.ListResourcesResponse\"\x15\x82\xd3\xe4\x93\x02\x0f\x12\r/v1/resources\x12\x8a\x01\n" +
 	"\fListVersions\x12'.connectaip.test.v1.ListVersionsRequest\x1a(.connectaip.test.v1.ListVersionsResponse\"'\x82\xd3\xe4\x93\x02!\x12\x1f/v1/{name=resources/*}/versions\x12\x8b\x01\n" +
 	"\x0fStreamResources\x12).connectaip.test.v1.CreateResourceRequest\x1a*.connectaip.test.v1.CreateResourceResponse\"\x1f\x82\xd3\xe4\x93\x02\x19:\x01*\"\x14/v1/resources:stream0\x01\x12s\n" +
-	"\x0eDeleteResource\x12).connectaip.test.v1.DeleteResourceRequest\x1a\x16.google.protobuf.Empty\"\x1e\x82\xd3\xe4\x93\x02\x18*\x16/v1/{name=resources/*}B\xd4\x01\n" +
+	"\x0eDeleteResource\x12).connectaip.test.v1.DeleteResourceRequest\x1a\x16.google.protobuf.Empty\"\x1e\x82\xd3\xe4\x93\x02\x18*\x16/v1/{name=resources/*}2\x89\x02\n" +
+	"\x14MixedCoverageService\x12\x88\x01\n" +
+	"\x0fAnnotatedMethod\x12&.connectaip.test.v1.GetResourceRequest\x1a'.connectaip.test.v1.GetResourceResponse\"$\x82\xd3\xe4\x93\x02\x1e\x12\x1c/v1/mixed/{name=resources/*}\x12f\n" +
+	"\x11UnannotatedMethod\x12&.connectaip.test.v1.GetResourceRequest\x1a'.connectaip.test.v1.GetResourceResponse\"\x00B\xd4\x01\n" +
 	"\x16com.connectaip.test.v1B\tTestProtoP\x01ZEgithub.com/firetiger-oss/connect-aip/internal/testproto/testv1;testv1\xa2\x02\x03CTX\xaa\x02\x12Connectaip.Test.V1\xca\x02\x12Connectaip\\Test\\V1\xe2\x02\x1eConnectaip\\Test\\V1\\GPBMetadata\xea\x02\x14Connectaip::Test::V1b\x06proto3"
 
 var (
@@ -690,15 +693,19 @@ var file_test_proto_depIdxs = []int32{
 	9,  // 10: connectaip.test.v1.TestService.ListVersions:input_type -> connectaip.test.v1.ListVersionsRequest
 	1,  // 11: connectaip.test.v1.TestService.StreamResources:input_type -> connectaip.test.v1.CreateResourceRequest
 	11, // 12: connectaip.test.v1.TestService.DeleteResource:input_type -> connectaip.test.v1.DeleteResourceRequest
-	2,  // 13: connectaip.test.v1.TestService.CreateResource:output_type -> connectaip.test.v1.CreateResourceResponse
-	4,  // 14: connectaip.test.v1.TestService.GetResource:output_type -> connectaip.test.v1.GetResourceResponse
-	6,  // 15: connectaip.test.v1.TestService.UpdateResource:output_type -> connectaip.test.v1.UpdateResourceResponse
-	8,  // 16: connectaip.test.v1.TestService.ListResources:output_type -> connectaip.test.v1.ListResourcesResponse
-	10, // 17: connectaip.test.v1.TestService.ListVersions:output_type -> connectaip.test.v1.ListVersionsResponse
-	2,  // 18: connectaip.test.v1.TestService.StreamResources:output_type -> connectaip.test.v1.CreateResourceResponse
-	12, // 19: connectaip.test.v1.TestService.DeleteResource:output_type -> google.protobuf.Empty
-	13, // [13:20] is the sub-list for method output_type
-	6,  // [6:13] is the sub-list for method input_type
+	3,  // 13: connectaip.test.v1.MixedCoverageService.AnnotatedMethod:input_type -> connectaip.test.v1.GetResourceRequest
+	3,  // 14: connectaip.test.v1.MixedCoverageService.UnannotatedMethod:input_type -> connectaip.test.v1.GetResourceRequest
+	2,  // 15: connectaip.test.v1.TestService.CreateResource:output_type -> connectaip.test.v1.CreateResourceResponse
+	4,  // 16: connectaip.test.v1.TestService.GetResource:output_type -> connectaip.test.v1.GetResourceResponse
+	6,  // 17: connectaip.test.v1.TestService.UpdateResource:output_type -> connectaip.test.v1.UpdateResourceResponse
+	8,  // 18: connectaip.test.v1.TestService.ListResources:output_type -> connectaip.test.v1.ListResourcesResponse
+	10, // 19: connectaip.test.v1.TestService.ListVersions:output_type -> connectaip.test.v1.ListVersionsResponse
+	2,  // 20: connectaip.test.v1.TestService.StreamResources:output_type -> connectaip.test.v1.CreateResourceResponse
+	12, // 21: connectaip.test.v1.TestService.DeleteResource:output_type -> google.protobuf.Empty
+	4,  // 22: connectaip.test.v1.MixedCoverageService.AnnotatedMethod:output_type -> connectaip.test.v1.GetResourceResponse
+	4,  // 23: connectaip.test.v1.MixedCoverageService.UnannotatedMethod:output_type -> connectaip.test.v1.GetResourceResponse
+	15, // [15:24] is the sub-list for method output_type
+	6,  // [6:15] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
 	6,  // [6:6] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name
@@ -717,7 +724,7 @@ func file_test_proto_init() {
 			NumEnums:      0,
 			NumMessages:   12,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_test_proto_goTypes,
 		DependencyIndexes: file_test_proto_depIdxs,

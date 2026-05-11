@@ -105,7 +105,7 @@ type interceptorTransport struct {
 
 func (t *interceptorTransport) Do(req *http.Request) (*http.Response, error) {
 	connectReq := connect.NewRequest[struct{}](nil)
-	setRequestIsClient(connectReq)
+	setRequestSpec(connectReq, "")
 	for k, vs := range req.Header {
 		for _, v := range vs {
 			connectReq.Header().Add(k, v)
@@ -182,6 +182,10 @@ type MethodSpec struct {
 	HTTPMethod string    // GET, POST, PATCH, DELETE, PUT
 	URLPattern string    // e.g., "/v1/credentials/{name}"
 	PathVars   []PathVar // path variable extraction info
+	// Procedure is the Connect RPC procedure URL for this method
+	// (e.g. "/example.v1.Service/Method"). When set, it populates
+	// req.Spec().Procedure so unary interceptors can identify the RPC.
+	Procedure string
 }
 
 // PathVar describes how to extract a path variable from a request.
@@ -223,10 +227,27 @@ func NewClient[Req, Resp any](
 	return c
 }
 
-// Call executes the REST request.
+// Call executes the REST request and returns the response message. Convenience
+// wrapper around CallRequest for callers that don't need per-call headers or
+// connect.Response wrapping.
 func (c *Client[Req, Resp]) Call(ctx context.Context, req *Req) (*Resp, error) {
-	urlPath := c.spec.URLPattern
+	resp, err := c.CallRequest(ctx, connect.NewRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg, nil
+}
 
+// CallRequest executes the REST request, propagating headers from connectReq onto
+// the outgoing HTTP request and populating response headers on the returned
+// connect.Response. Static headers from WithHeader are applied first, then
+// per-call headers from connectReq override them. Interceptors registered via
+// WithInterceptors run with full visibility into the connect.Request.
+func (c *Client[Req, Resp]) CallRequest(ctx context.Context, connectReq *connect.Request[Req]) (*connect.Response[Resp], error) {
+	setRequestSpec(connectReq, c.spec.Procedure)
+	req := connectReq.Msg
+
+	urlPath := c.spec.URLPattern
 	if c.pathVarFn != nil {
 		pathVars := c.pathVarFn(req)
 		for _, pv := range c.spec.PathVars {
@@ -257,6 +278,7 @@ func (c *Client[Req, Resp]) Call(ctx context.Context, req *Req) (*Resp, error) {
 	}
 
 	var body io.Reader
+	hasBody := false
 	// Only send body for POST/PATCH/PUT when queryFn is nil (body-based route).
 	// When queryFn is provided, fields are sent as query params instead.
 	if c.queryFn == nil && (c.spec.HTTPMethod == "POST" || c.spec.HTTPMethod == "PATCH" || c.spec.HTTPMethod == "PUT") {
@@ -271,6 +293,7 @@ func (c *Client[Req, Resp]) Call(ctx context.Context, req *Req) (*Resp, error) {
 			return nil, fmt.Errorf("marshaling request: %w", err)
 		}
 		body = bytes.NewReader(data)
+		hasBody = true
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, c.spec.HTTPMethod, fullURL, body)
@@ -278,44 +301,36 @@ func (c *Client[Req, Resp]) Call(ctx context.Context, req *Req) (*Resp, error) {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
-	httpReq.Header.Set("Accept", "application/json")
-	if body != nil {
-		httpReq.Header.Set("Content-Type", "application/json")
+	// Compose headers on the connect.Request so interceptors see the full set.
+	// Static WithHeader values fill in defaults; existing connectReq headers win.
+	if connectReq.Header().Get("Accept") == "" {
+		connectReq.Header().Set("Accept", "application/json")
 	}
-
+	if hasBody && connectReq.Header().Get("Content-Type") == "" {
+		connectReq.Header().Set("Content-Type", "application/json")
+	}
 	for k, v := range c.opts.headers {
-		httpReq.Header.Set(k, v)
-	}
-
-	if len(c.opts.interceptors) > 0 {
-		return callWithInterceptors[Req, Resp](ctx, c.httpClient, httpReq, req, c.opts.interceptors)
-	}
-	return doHTTPCall[Resp](c.httpClient, httpReq)
-}
-
-// callWithInterceptors creates a connect.Request, runs interceptors, copies
-// modified headers back to the HTTP request, then executes.
-func callWithInterceptors[Req, Resp any](ctx context.Context, httpClient connect.HTTPClient, httpReq *http.Request, req *Req, interceptors []connect.UnaryInterceptorFunc) (*Resp, error) {
-	connectReq := connect.NewRequest(req)
-	setRequestIsClient(connectReq)
-	for k, vs := range httpReq.Header {
-		for _, v := range vs {
-			connectReq.Header().Add(k, v)
+		if connectReq.Header().Get(k) == "" {
+			connectReq.Header().Set(k, v)
 		}
 	}
 
+	httpClient := c.httpClient
 	next := connect.UnaryFunc(func(ctx context.Context, anyReq connect.AnyRequest) (connect.AnyResponse, error) {
 		httpReq = httpReq.WithContext(ctx)
 		httpReq.Header = anyReq.Header().Clone()
-		result, err := doHTTPCall[Resp](httpClient, httpReq)
-		if err != nil {
-			return nil, err
+		msg, respHeader, respTrailer, callErr := doHTTPCall[Resp](httpClient, httpReq)
+		if callErr != nil {
+			return nil, callErr
 		}
-		return connect.NewResponse(result), nil
+		out := connect.NewResponse(msg)
+		copyHeader(out.Header(), respHeader)
+		copyHeader(out.Trailer(), respTrailer)
+		return out, nil
 	})
 
-	for i := len(interceptors) - 1; i >= 0; i-- {
-		next = interceptors[i](next)
+	for i := len(c.opts.interceptors) - 1; i >= 0; i-- {
+		next = c.opts.interceptors[i](next)
 	}
 
 	anyResp, err := next(ctx, connectReq)
@@ -326,13 +341,23 @@ func callWithInterceptors[Req, Resp any](ctx context.Context, httpClient connect
 	if !ok {
 		return nil, fmt.Errorf("unexpected response type %T", anyResp)
 	}
-	return resp.Msg, nil
+	return resp, nil
 }
 
-// setRequestIsClient sets Spec().IsClient = true on a connect.Request via unsafe
-// access to the unexported spec field, so interceptors that check IsClient
-// (like NewM2MAuthInterceptor) correctly identify REST client requests.
-func setRequestIsClient[T any](req *connect.Request[T]) {
+func copyHeader(dst, src http.Header) {
+	for k, vs := range src {
+		for _, v := range vs {
+			dst.Add(k, v)
+		}
+	}
+}
+
+// setRequestSpec populates Spec().IsClient = true and Spec().Procedure on a
+// connect.Request via unsafe access to the unexported spec field. IsClient
+// lets interceptors that branch on it (like NewM2MAuthInterceptor) correctly
+// identify REST client requests; Procedure lets them identify the RPC method,
+// matching the behaviour of a connect-go-generated client.
+func setRequestSpec[T any](req *connect.Request[T], procedure string) {
 	rv := reflect.ValueOf(req).Elem()
 	specField := rv.FieldByName("spec")
 	if !specField.IsValid() {
@@ -340,52 +365,64 @@ func setRequestIsClient[T any](req *connect.Request[T]) {
 	}
 	spec := (*connect.Spec)(unsafe.Pointer(specField.UnsafeAddr()))
 	spec.IsClient = true
+	if procedure != "" {
+		spec.Procedure = procedure
+	}
 }
 
-func doHTTPCall[Resp any](httpClient connect.HTTPClient, httpReq *http.Request) (*Resp, error) {
+func doHTTPCall[Resp any](httpClient connect.HTTPClient, httpReq *http.Request) (*Resp, http.Header, http.Header, error) {
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
+		return nil, nil, nil, fmt.Errorf("executing request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, parseErrorResponse(resp.StatusCode, respBody)
+		return nil, resp.Header, resp.Trailer, parseErrorResponse(resp.StatusCode, respBody, resp.Header, resp.Trailer)
 	}
 
 	var result Resp
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
+		return nil, resp.Header, resp.Trailer, fmt.Errorf("reading response: %w", err)
 	}
 	if pm, ok := any(&result).(proto.Message); ok {
 		if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(respBody, pm); err != nil {
-			return nil, fmt.Errorf("decoding response: %w", err)
+			return nil, resp.Header, resp.Trailer, fmt.Errorf("decoding response: %w", err)
 		}
 	} else {
 		if err := json.Unmarshal(respBody, &result); err != nil {
-			return nil, fmt.Errorf("decoding response: %w", err)
+			return nil, resp.Header, resp.Trailer, fmt.Errorf("decoding response: %w", err)
 		}
 	}
 
-	return &result, nil
+	return &result, resp.Header, resp.Trailer, nil
 }
 
-// parseErrorResponse parses an HTTP error response body into a *connect.Error.
+// parseErrorResponse parses an HTTP error response body into a *connect.Error,
+// copying the response headers and trailers onto the error's metadata so
+// callers checking err.Meta() (e.g. for Retry-After or request IDs) see the
+// same values they would when using a connect-go-generated client.
 // The server returns JSON like {"code":"not_found","message":"resource not found"}.
 // If the body can't be parsed, it falls back to mapping the HTTP status code.
-func parseErrorResponse(statusCode int, body []byte) *connect.Error {
+func parseErrorResponse(statusCode int, body []byte, header, trailer http.Header) *connect.Error {
 	var errBody struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	}
+	var connectErr *connect.Error
 	if json.Unmarshal(body, &errBody) == nil && errBody.Code != "" {
 		if code, ok := connectCodeFromString(errBody.Code); ok {
-			return connect.NewError(code, fmt.Errorf("%s", errBody.Message))
+			connectErr = connect.NewError(code, fmt.Errorf("%s", errBody.Message))
 		}
 	}
-	return connect.NewError(httpStatusToConnectCode(statusCode), fmt.Errorf("%s", string(body)))
+	if connectErr == nil {
+		connectErr = connect.NewError(httpStatusToConnectCode(statusCode), fmt.Errorf("%s", string(body)))
+	}
+	copyHeader(connectErr.Meta(), header)
+	copyHeader(connectErr.Meta(), trailer)
+	return connectErr
 }
 
 func httpStatusToConnectCode(status int) connect.Code {

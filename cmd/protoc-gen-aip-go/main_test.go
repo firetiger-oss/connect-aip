@@ -67,10 +67,72 @@ func TestUnaryHandlersUseConnectaipForward(t *testing.T) {
 		`connectaip.Forward[*testv1.CreateResourceRequest, *testv1.CreateResourceResponse]`,
 		`connectaip.ForwardWithBody[*testv1.GetResourceRequest, *testv1.GetResourceResponse]`,
 		`NewTestServiceAIPHandler`,
-		`TestServiceAIPClient`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("fixture missing %q", want)
+		}
+	}
+}
+
+// TestClientImplementsStandardInterface verifies the AIP client constructor
+// returns the standard {Service}Client interface (not a separate AIP-specific
+// interface), and that unary methods take *connect.Request[T] and return
+// *connect.Response[T] so the impl satisfies the standard interface. It also
+// verifies that the AIP type name is still exported (as an alias) so existing
+// downstream code that types variables as {Service}AIPClient keeps compiling.
+func TestClientImplementsStandardInterface(t *testing.T) {
+	content := readFixture(t)
+
+	for _, want := range []string{
+		`func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) TestServiceClient`,
+		`func (c *testServiceAIPClient) CreateResource(ctx context.Context, req *connect.Request[testv1.CreateResourceRequest]) (*connect.Response[testv1.CreateResourceResponse], error)`,
+		`return c.createResource.CallRequest(ctx, req)`,
+		// The AIP type name is preserved as an alias so existing code keeps
+		// compiling after regeneration.
+		`type TestServiceAIPClient = TestServiceClient`,
+		// Procedure must propagate so unary interceptors can identify the RPC.
+		`Procedure:  TestServiceCreateResourceProcedure,`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("fixture missing %q — AIP client must satisfy the standard {Service}Client interface", want)
+		}
+	}
+
+	for _, banned := range []string{
+		`type TestServiceAIPClient interface`,
+		`TestServiceAIPClient is a AIP client`,
+	} {
+		if strings.Contains(content, banned) {
+			t.Errorf("fixture contains banned token %q — the separate AIP client interface was removed", banned)
+		}
+	}
+}
+
+// TestPartialCoverageEmitsLegacyInterface verifies that when a service has any
+// RPC without an HTTP rule (or otherwise filtered out by the plugin), the
+// generated constructor falls back to a service-scoped {Service}AIPClient
+// interface rather than claiming to satisfy {Service}Client. Without this
+// fallback the generated file would not compile because the impl struct is
+// missing methods the standard interface requires.
+func TestPartialCoverageEmitsLegacyInterface(t *testing.T) {
+	content := readFixture(t)
+
+	for _, want := range []string{
+		`type MixedCoverageServiceAIPClient interface {`,
+		`AnnotatedMethod(ctx context.Context, req *connect.Request[testv1.GetResourceRequest]) (*connect.Response[testv1.GetResourceResponse], error)`,
+		`func NewMixedCoverageServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts ...connectaip.ClientOption) MixedCoverageServiceAIPClient {`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("fixture missing %q — partial-coverage services must emit a service-scoped AIP interface", want)
+		}
+	}
+
+	for _, banned := range []string{
+		`opts ...connectaip.ClientOption) MixedCoverageServiceClient`,
+		`MixedCoverageServiceAIPClient is a AIP client`,
+	} {
+		if strings.Contains(content, banned) {
+			t.Errorf("fixture contains banned token %q — partial-coverage services must NOT return the standard {Service}Client", banned)
 		}
 	}
 }
@@ -107,7 +169,7 @@ func TestUnaryHandlerWithExternalReturnType(t *testing.T) {
 	for _, want := range []string{
 		`emptypb "google.golang.org/protobuf/types/known/emptypb"`,
 		`*testv1.DeleteResourceRequest, *emptypb.Empty`,
-		`DeleteResource(ctx context.Context, req *testv1.DeleteResourceRequest) (*emptypb.Empty, error)`,
+		`DeleteResource(ctx context.Context, req *connect.Request[testv1.DeleteResourceRequest]) (*connect.Response[emptypb.Empty], error)`,
 		`*connectaip.Client[testv1.DeleteResourceRequest, emptypb.Empty]`,
 	} {
 		if !strings.Contains(content, want) {

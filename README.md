@@ -50,11 +50,11 @@ plugins:
     strategy: all
 ```
 
-For each service with at least one usable HTTP rule, the Go plugin emits a `*_aip.connect.go` file alongside the standard `*.connect.go`, exposing `NewServiceAIPHandler` (an `iter.Seq2[string, http.Handler]` for `http.ServeMux`) and `NewServiceAIPClient` (a typed REST client wrapping `connect.HTTPClient`).
+For each service with at least one usable HTTP rule, the Go plugin emits a `*_aip.connect.go` file alongside the standard `*.connect.go`, exposing `NewServiceAIPHandler` (an `iter.Seq2[string, http.Handler]` for `http.ServeMux`) and `NewServiceAIPClient` (a typed REST client wrapping `connect.HTTPClient`). `NewServiceAIPClient` returns the standard `ServiceClient` interface emitted by `protoc-gen-connect-go`, so you can drop it in wherever you currently call `NewServiceClient` — request headers set on `connect.Request[T]` propagate through to the outgoing HTTP request, and response headers populate `connect.Response[T]`.
 
-The TypeScript plugin emits `*_aip.ts` with a `*AIPClient` class per service. The runtime is inlined into each generated file (no separate npm package).
+The TypeScript plugin emits `*_aip.ts` with a `*AIPClient` class per service. The runtime is inlined into each generated file (no separate npm package). The class declares `implements Client<typeof Service>` from `@connectrpc/connect`, so it's a drop-in replacement for a client built via `createClient(Service, transport)`. Consumers must add `@connectrpc/connect` and `@bufbuild/protobuf` to their package.
 
-The Python plugin emits `*_aip.py` with a `*AIPClient` class per service that uses `httpx` for transport. Install the `connectaip` runtime alongside.
+The Python plugin emits `*_aip.py` with a `*AIPClient` class per service that uses `httpx` for transport. Install the `connectaip` runtime alongside. Methods take raw protobuf messages, return raw protobuf messages, and accept a per-call `headers` kwarg — the same shape as a typical connect-python client.
 
 ## OpenAPI spec generation
 

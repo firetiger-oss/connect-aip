@@ -1,0 +1,24 @@
+version: v2
+
+# Generates a TS fixture for the protoc-gen-aip-ts regression test. Run this
+# whenever test.proto changes:
+#   go install ./cmd/protoc-gen-aip-ts
+#   cd internal/testproto && PATH=$HOME/go/bin:$PATH buf generate --template buf.gen.ts.yaml
+
+managed:
+  enabled: true
+  disable:
+    - file_option: go_package
+      module: buf.build/googleapis/googleapis
+
+inputs:
+  - directory: .
+
+plugins:
+  - remote: buf.build/bufbuild/es:v2.4.0
+    out: testts
+    opt:
+      - target=ts
+
+  - local: protoc-gen-aip-ts
+    out: testts
