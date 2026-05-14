@@ -73,6 +73,10 @@ func (t *pathVarSSETransport) Do(req *http.Request) (*http.Response, error) {
 // rawURL is the full target URL (e.g. baseURL+"/v2/query"); url.Parse is used to decode it.
 // pathVarFn, if non-nil, is called with the JSON-encoded message from each request to
 // substitute path-variable placeholders (e.g. "{name}") in the URL.
+//
+// Interceptors registered via WithInterceptors are NOT applied here; for
+// server-streaming clients they must be passed to connect.NewClient via
+// ConnectClientOptions so connect-go runs them as streaming interceptors.
 func NewSSEClient(httpClient connect.HTTPClient, rawURL string, pathVarFn func([]byte) iter.Seq2[string, string], opts ...ClientOption) connect.HTTPClient {
 	o := &clientOptions{}
 	for _, opt := range opts {
@@ -80,9 +84,6 @@ func NewSSEClient(httpClient connect.HTTPClient, rawURL string, pathVarFn func([
 	}
 	targetURL, _ := url.Parse(rawURL)
 	var transport connect.HTTPClient = httpClient
-	if len(o.interceptors) > 0 {
-		transport = &interceptorTransport{interceptors: o.interceptors, next: transport}
-	}
 	if len(o.headers) > 0 {
 		transport = &headerTransport{headers: o.headers, next: transport}
 	}
@@ -93,45 +94,6 @@ func NewSSEClient(httpClient connect.HTTPClient, rawURL string, pathVarFn func([
 		URL:        targetURL,
 		HTTPClient: transport,
 	}
-}
-
-// interceptorTransport wraps a connect.HTTPClient to run interceptors before each request.
-// This is used for SSE streaming clients where interceptors can't be applied at the
-// Call() level (because connectsse.Client manages the HTTP request lifecycle).
-type interceptorTransport struct {
-	interceptors []connect.UnaryInterceptorFunc
-	next         connect.HTTPClient
-}
-
-func (t *interceptorTransport) Do(req *http.Request) (*http.Response, error) {
-	connectReq := connect.NewRequest[struct{}](nil)
-	setRequestSpec(connectReq, "")
-	for k, vs := range req.Header {
-		for _, v := range vs {
-			connectReq.Header().Add(k, v)
-		}
-	}
-
-	var httpResp *http.Response
-	next := connect.UnaryFunc(func(ctx context.Context, anyReq connect.AnyRequest) (connect.AnyResponse, error) {
-		req = req.WithContext(ctx)
-		req.Header = anyReq.Header().Clone()
-		var err error
-		httpResp, err = t.next.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		return connect.NewResponse[struct{}](nil), nil
-	})
-
-	for i := len(t.interceptors) - 1; i >= 0; i-- {
-		next = t.interceptors[i](next)
-	}
-
-	if _, err := next(req.Context(), connectReq); err != nil {
-		return nil, err
-	}
-	return httpResp, nil
 }
 
 // SSEProcedureURL returns the URL to pass to connect.NewClient for server-streaming
@@ -154,7 +116,7 @@ type ClientOption func(*clientOptions)
 
 type clientOptions struct {
 	headers      map[string]string
-	interceptors []connect.UnaryInterceptorFunc
+	interceptors []connect.Interceptor
 }
 
 // WithHeader adds a header to all requests made by the client.
@@ -167,14 +129,34 @@ func WithHeader(key, value string) ClientOption {
 	}
 }
 
-// WithInterceptors adds interceptors that run before each request.
-// Interceptors see a connect.AnyRequest with the proto message and HTTP headers,
-// and can modify headers (e.g., inject Authorization) before the request is sent.
-// This matches the ConnectRPC connect.WithInterceptors() pattern.
-func WithInterceptors(interceptors ...connect.UnaryInterceptorFunc) ClientOption {
+// WithInterceptors adds connect.Interceptors that run before each request.
+// Interceptors see a connect.AnyRequest with the proto message, HTTP headers,
+// and populated Spec/Peer, and can modify headers (e.g., inject Authorization)
+// before the request is sent. This matches the ConnectRPC
+// connect.WithInterceptors() pattern and accepts full connect.Interceptors such
+// as those from connectrpc.com/otelconnect. For unary methods the WrapUnary
+// stage runs; for server-streaming methods the interceptors are applied by
+// connect.NewClient (see ConnectClientOptions).
+func WithInterceptors(interceptors ...connect.Interceptor) ClientOption {
 	return func(o *clientOptions) {
 		o.interceptors = append(o.interceptors, interceptors...)
 	}
+}
+
+// ConnectClientOptions translates connectaip ClientOptions into connect
+// ClientOptions for the server-streaming SSE client built with connect.NewClient.
+// Interceptors registered via WithInterceptors are surfaced as
+// connect.WithInterceptors so connect-go runs them as streaming interceptors.
+func ConnectClientOptions(opts ...ClientOption) []connect.ClientOption {
+	o := &clientOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	var out []connect.ClientOption
+	if len(o.interceptors) > 0 {
+		out = append(out, connect.WithInterceptors(o.interceptors...))
+	}
+	return out
 }
 
 // MethodSpec describes a REST method's HTTP configuration.
@@ -245,6 +227,9 @@ func (c *Client[Req, Resp]) Call(ctx context.Context, req *Req) (*Resp, error) {
 // WithInterceptors run with full visibility into the connect.Request.
 func (c *Client[Req, Resp]) CallRequest(ctx context.Context, connectReq *connect.Request[Req]) (*connect.Response[Resp], error) {
 	setRequestSpec(connectReq, c.spec.Procedure)
+	if u, err := url.Parse(c.baseURL); err == nil {
+		setRequestPeer(connectReq, u.Host)
+	}
 	req := connectReq.Msg
 
 	urlPath := c.spec.URLPattern
@@ -330,7 +315,7 @@ func (c *Client[Req, Resp]) CallRequest(ctx context.Context, connectReq *connect
 	})
 
 	for i := len(c.opts.interceptors) - 1; i >= 0; i-- {
-		next = c.opts.interceptors[i](next)
+		next = c.opts.interceptors[i].WrapUnary(next)
 	}
 
 	anyResp, err := next(ctx, connectReq)
@@ -368,6 +353,26 @@ func setRequestSpec[T any](req *connect.Request[T], procedure string) {
 	if procedure != "" {
 		spec.Procedure = procedure
 	}
+}
+
+// setRequestPeer populates Spec().Peer on a connect.Request via unsafe access
+// to the unexported peer field, so interceptors (like connectrpc.com/otelconnect)
+// that read req.Peer().Addr / req.Peer().Protocol see the target host and a
+// protocol, matching the behaviour of a connect-go-generated client. The AIP
+// client speaks REST/JSON, but reports connect.ProtocolConnect as the closest
+// well-known protocol so telemetry attributes are populated rather than empty.
+func setRequestPeer[T any](req *connect.Request[T], addr string) {
+	if addr == "" {
+		return
+	}
+	rv := reflect.ValueOf(req).Elem()
+	peerField := rv.FieldByName("peer")
+	if !peerField.IsValid() {
+		return
+	}
+	peer := (*connect.Peer)(unsafe.Pointer(peerField.UnsafeAddr()))
+	peer.Addr = addr
+	peer.Protocol = connect.ProtocolConnect
 }
 
 func doHTTPCall[Resp any](httpClient connect.HTTPClient, httpReq *http.Request) (*Resp, http.Header, http.Header, error) {

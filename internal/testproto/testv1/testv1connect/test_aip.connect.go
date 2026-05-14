@@ -185,7 +185,7 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 		streamResources: connect.NewClient[testv1.CreateResourceRequest, testv1.CreateResourceResponse](
 			connectaip.NewSSEClient(httpClient, baseURL+"/v1/resources:stream", nil, opts...),
 			connectaip.SSEProcedureURL(baseURL, TestServiceStreamResourcesProcedure),
-			connect.WithProtoJSON(),
+			append([]connect.ClientOption{connect.WithProtoJSON()}, connectaip.ConnectClientOptions(opts...)...)...,
 		),
 		deleteResource: connectaip.NewClient[testv1.DeleteResourceRequest, emptypb.Empty](
 			httpClient, baseURL,
