@@ -3,7 +3,7 @@ module github.com/firetiger-oss/connect-aip
 go 1.26
 
 require (
-	connectrpc.com/connect v1.19.1
+	connectrpc.com/connect v1.19.2
 	connectrpc.com/otelconnect v0.9.0
 	github.com/firetiger-oss/connect-sse v0.1.0
 	go.opentelemetry.io/otel/sdk v1.43.0
