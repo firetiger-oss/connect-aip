@@ -58,6 +58,19 @@ func TestStreamingHandlerInvariants(t *testing.T) {
 	}
 }
 
+// TestStreamingClientWiresInterceptors verifies that the server-streaming
+// client constructor routes connectaip ClientOptions into connect.NewClient via
+// connectaip.ConnectClientOptions. This is what makes full connect.Interceptors
+// (e.g. connectrpc.com/otelconnect) run as streaming interceptors on the SSE
+// client path — without it, otelconnect would never see streaming RPCs.
+func TestStreamingClientWiresInterceptors(t *testing.T) {
+	content := readFixture(t)
+
+	if !strings.Contains(content, "connectaip.ConnectClientOptions(opts...)") {
+		t.Error("fixture missing connectaip.ConnectClientOptions(opts...) — streaming client must forward interceptors into connect.NewClient")
+	}
+}
+
 // TestUnaryHandlersUseConnectaipForward verifies that unary handlers use the
 // connectaip.Forward path (not connectsse) and emit the AIP-named symbols.
 func TestUnaryHandlersUseConnectaipForward(t *testing.T) {

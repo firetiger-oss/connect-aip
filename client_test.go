@@ -353,6 +353,46 @@ func TestClientInterceptorSeesProcedure(t *testing.T) {
 	}
 }
 
+// TestClientInterceptorSeesPeer verifies that a unary interceptor sees
+// req.Peer() populated with the target host and a protocol. Interceptors that
+// build telemetry from peer info (e.g. connectrpc.com/otelconnect, which reads
+// Peer().Addr and Peer().Protocol) need this to emit non-empty attributes.
+func TestClientInterceptorSeesPeer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(testResponse{ID: "ok"})
+	}))
+	defer server.Close()
+
+	var sawPeer connect.Peer
+	interceptor := connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
+		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+			sawPeer = req.Peer()
+			return next(ctx, req)
+		}
+	})
+
+	client := NewClient[testRequest, testResponse](
+		server.Client(),
+		server.URL,
+		MethodSpec{HTTPMethod: "GET", URLPattern: "/v1/items"},
+		nil,
+		nil,
+		WithInterceptors(interceptor),
+	)
+
+	if _, err := client.Call(t.Context(), &testRequest{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantAddr := strings.TrimPrefix(server.URL, "http://")
+	if sawPeer.Addr != wantAddr {
+		t.Errorf("interceptor saw Peer().Addr=%q, want %q", sawPeer.Addr, wantAddr)
+	}
+	if sawPeer.Protocol != connect.ProtocolConnect {
+		t.Errorf("interceptor saw Peer().Protocol=%q, want %q", sawPeer.Protocol, connect.ProtocolConnect)
+	}
+}
+
 func TestClientWithMultipleInterceptors(t *testing.T) {
 	var gotHeaders http.Header
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1192,7 +1192,7 @@ func generateServiceClient(g *protogen.GeneratedFile, service *protogen.Service,
 			g.P("\t\t", fieldName, ": connect.NewClient[", inputType, ", ", outputType, "](")
 			g.P("\t\t\tconnectaip.NewSSEClient(httpClient, baseURL+\"", restPath, "\", ", pathVarFnArg, ", opts...),")
 			g.P("\t\t\tconnectaip.SSEProcedureURL(baseURL, ", procedureConst, "),")
-			g.P("\t\t\tconnect.WithProtoJSON(),")
+			g.P("\t\t\tappend([]connect.ClientOption{connect.WithProtoJSON()}, connectaip.ConnectClientOptions(opts...)...)...,")
 			g.P("\t\t),")
 		} else {
 			inputType := qualifiedTypeName(g, route.inputType.GoIdent, pkgAlias, protoImportPath)
