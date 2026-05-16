@@ -189,6 +189,50 @@ func TestLoopbackClientPanicBeforeWriteReturns500(t *testing.T) {
 	}
 }
 
+// Connect-RPC's server-streaming handlers type-assert the ResponseWriter
+// to http.Flusher and error before sending the first frame if it's
+// missing. The cheapest pin against future regressions.
+func TestLoopbackResponseWriterImplementsFlusher(t *testing.T) {
+	var w any = &loopbackResponseWriter{header: http.Header{}, ready: make(chan struct{})}
+	if _, ok := w.(http.Flusher); !ok {
+		t.Fatal("loopbackResponseWriter must implement http.Flusher")
+	}
+}
+
+// End-to-end server-streaming through the loopback transport: handler
+// flushes headers, then writes and flushes each frame. Reproducer for
+// the Connect-RPC server-streaming bug — without Flush, the handler
+// errored on its first frame.
+func TestLoopbackTransportSupportsServerStreaming(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "no flusher", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
+		for _, line := range []string{"one\n", "two\n", "three\n"} {
+			_, _ = io.WriteString(w, line)
+			flusher.Flush()
+		}
+	})
+	client := &http.Client{Transport: NewLoopbackTransport(handler)}
+	resp, err := client.Get("http://loopback/stream")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if got := string(body); got != "one\ntwo\nthree\n" {
+		t.Errorf("body = %q, want %q", got, "one\ntwo\nthree\n")
+	}
+}
+
 // A handler panic after headers have already been sent cannot change
 // the status. The caller observes a read error on the response body
 // (and the goroutine itself must not crash).

@@ -138,6 +138,15 @@ func (w *loopbackResponseWriter) Write(b []byte) (int, error) {
 	return w.pw.Write(b)
 }
 
+// Flush implements http.Flusher. The pipe-backed body has no internal
+// buffer to drain (writes block until consumed by the reader), so Flush
+// only needs to publish the headers/status so the RoundTrip caller sees
+// the response — the canonical "headers-only flush" handshake streaming
+// handlers rely on.
+func (w *loopbackResponseWriter) Flush() {
+	w.flushHeaders()
+}
+
 func (w *loopbackResponseWriter) flushHeaders() {
 	w.WriteHeader(http.StatusOK)
 }
