@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoopbackClientDispatchesToHandler(t *testing.T) {
@@ -187,6 +188,89 @@ func TestLoopbackClientPanicBeforeWriteReturns500(t *testing.T) {
 	if !strings.Contains(string(body), "internal server error") {
 		t.Errorf("body %q missing error message", body)
 	}
+}
+
+// Streaming libraries (e.g. connect-sse) type-assert the ResponseWriter
+// to http.Flusher to decide whether to push events incrementally. The
+// loopback writer must advertise that capability.
+func TestLoopbackResponseWriterImplementsFlusher(t *testing.T) {
+	mux := http.NewServeMux()
+	gotFlusher := make(chan bool, 1)
+	mux.HandleFunc("/v1/flusher", func(w http.ResponseWriter, _ *http.Request) {
+		_, ok := w.(http.Flusher)
+		gotFlusher <- ok
+		w.WriteHeader(http.StatusOK)
+	})
+
+	client := &http.Client{Transport: NewLoopbackTransport(mux)}
+	resp, err := client.Get("http://loopback/v1/flusher")
+	if err != nil {
+		t.Fatalf("client.Get: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if ok := <-gotFlusher; !ok {
+		t.Fatal("loopback ResponseWriter does not implement http.Flusher")
+	}
+}
+
+// Flush before any Write must publish headers/status to the caller so
+// the response is observable while the handler is still running — the
+// handshake server-streaming handlers rely on.
+func TestLoopbackFlushBeforeWriteUnblocksClient(t *testing.T) {
+	mux := http.NewServeMux()
+	handlerDone := make(chan struct{})
+	release := make(chan struct{})
+	mux.HandleFunc("/v1/early-flush", func(w http.ResponseWriter, _ *http.Request) {
+		defer close(handlerDone)
+		w.WriteHeader(http.StatusAccepted)
+		w.(http.Flusher).Flush()
+		<-release
+		_, _ = w.Write([]byte("late"))
+	})
+
+	client := &http.Client{Transport: NewLoopbackTransport(mux)}
+
+	respCh := make(chan *http.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := client.Get("http://loopback/v1/early-flush")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- resp
+	}()
+
+	var resp *http.Response
+	select {
+	case resp = <-respCh:
+	case err := <-errCh:
+		t.Fatalf("client.Get: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("client.Get did not return after handler Flush — Flusher contract broken")
+	}
+	defer resp.Body.Close()
+
+	select {
+	case <-handlerDone:
+		t.Fatal("handler returned before client observed response; cannot prove Flush unblocked the caller mid-handler")
+	default:
+	}
+
+	if resp.StatusCode != http.StatusAccepted {
+		t.Errorf("status = %d, want 202", resp.StatusCode)
+	}
+
+	close(release)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(body) != "late" {
+		t.Errorf("body = %q, want %q", body, "late")
+	}
+	<-handlerDone
 }
 
 // A handler panic after headers have already been sent cannot change
