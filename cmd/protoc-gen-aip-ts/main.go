@@ -137,6 +137,18 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 	g.P("  return new AIPError(httpStatusToCode[response.status] ?? 13, body);")
 	g.P("}")
 	g.P()
+	g.P("// Percent-encodes a path variable's value for interpolation into a URL path.")
+	g.P("// Resource IDs are arbitrary strings, so they can contain characters that are")
+	g.P("// structural in a URL — most importantly \"/\", which would otherwise split one")
+	g.P("// path segment into several and stop the request from matching its route at all")
+	g.P("// (a bare 404 rather than a service-level error). Rest-of-path placeholders")
+	g.P("// (\"{name...}\") deliberately span several segments, so their separators stay")
+	g.P("// literal and each segment is encoded on its own.")
+	g.P("export function encodePathVar(value: string, multiSegment: boolean): string {")
+	g.P("  if (!multiSegment) return encodeURIComponent(value);")
+	g.P("  return value.split(\"/\").map((segment) => encodeURIComponent(segment)).join(\"/\");")
+	g.P("}")
+	g.P()
 	g.P("// biome-ignore lint/suspicious/noExplicitAny: recursive JSON walker")
 	g.P("export function sanitizeAny(data: any, registry: Registry): any {")
 	g.P("  if (Array.isArray(data)) {")
@@ -648,6 +660,36 @@ func generateSSEHelper(g *protogen.GeneratedFile) {
 	g.P()
 }
 
+// generateTSURL emits the `url` binding for a method: the ServeMux path with each
+// path variable substituted in, percent-encoded via encodePathVar so that values
+// containing "/" (or spaces, "?", "#", …) stay inside the segment they belong to.
+// Shared by the unary and streaming emitters so the two can't drift.
+func generateTSURL(g *protogen.GeneratedFile, route routeInfo) {
+	if len(route.pathVars) == 0 {
+		g.P("    const url = `${this.baseUrl}", route.serveMuxPath, "`;")
+		return
+	}
+
+	g.P("    let url = `${this.baseUrl}", route.serveMuxPath, "`;")
+	for _, pv := range route.pathVars {
+		fieldAccessor := tsFieldAccessor(pv.fieldPath)
+		placeholder := "{" + pv.name
+		// A rest-of-path placeholder spans several segments, so its own "/"
+		// separators must survive encoding.
+		multiSegment := pv.wildcard && strings.Contains(route.serveMuxPath, pv.name+"...")
+		if multiSegment {
+			placeholder += "..."
+		}
+		placeholder += "}"
+
+		value := fieldAccessor + " ?? \"\""
+		if pv.prefix != "" {
+			value = "(" + value + ").replace(\"" + pv.prefix + "\", \"\")"
+		}
+		g.P("    url = url.replace(\"", placeholder, "\", encodePathVar(", value, ", ", multiSegment, "));")
+	}
+}
+
 func generateTSMethod(g *protogen.GeneratedFile, route routeInfo, resolver *tsTypeResolver) {
 	methodName := lowerFirst(route.rpcMethod)
 	inputType, inputSchema := resolver.resolve(route.inputType)
@@ -664,25 +706,7 @@ func generateTSMethod(g *protogen.GeneratedFile, route routeInfo, resolver *tsTy
 	g.P("  ): Promise<", outputType, "> {")
 	g.P("    const msg = create(", inputSchema, ", request as MessageInitShape<typeof ", inputSchema, ">);")
 
-	if len(route.pathVars) == 0 {
-		g.P("    const url = `${this.baseUrl}", route.serveMuxPath, "`;")
-	} else {
-		g.P("    let url = `${this.baseUrl}", route.serveMuxPath, "`;")
-		for _, pv := range route.pathVars {
-			fieldAccessor := tsFieldAccessor(pv.fieldPath)
-			placeholder := "{" + pv.name
-			if pv.wildcard && strings.Contains(route.serveMuxPath, pv.name+"...") {
-				placeholder += "..."
-			}
-			placeholder += "}"
-
-			if pv.prefix != "" {
-				g.P("    url = url.replace(\"", placeholder, "\", (", fieldAccessor, " ?? \"\").replace(\"", pv.prefix, "\", \"\"));")
-			} else {
-				g.P("    url = url.replace(\"", placeholder, "\", ", fieldAccessor, " ?? \"\");")
-			}
-		}
-	}
+	generateTSURL(g, route)
 	g.P()
 
 	if route.method == "GET" || route.method == "DELETE" {
@@ -730,24 +754,7 @@ func generateTSStreamingMethod(g *protogen.GeneratedFile, route routeInfo, metho
 	g.P("  ): AsyncGenerator<", outputType, "> {")
 	g.P("    const msg = create(", inputSchema, ", request as MessageInitShape<typeof ", inputSchema, ">);")
 
-	if len(route.pathVars) == 0 {
-		g.P("    const url = `${this.baseUrl}", route.serveMuxPath, "`;")
-	} else {
-		g.P("    let url = `${this.baseUrl}", route.serveMuxPath, "`;")
-		for _, pv := range route.pathVars {
-			fieldAccessor := tsFieldAccessor(pv.fieldPath)
-			placeholder := "{" + pv.name
-			if pv.wildcard && strings.Contains(route.serveMuxPath, pv.name+"...") {
-				placeholder += "..."
-			}
-			placeholder += "}"
-			if pv.prefix != "" {
-				g.P("    url = url.replace(\"", placeholder, "\", (", fieldAccessor, " ?? \"\").replace(\"", pv.prefix, "\", \"\"));")
-			} else {
-				g.P("    url = url.replace(\"", placeholder, "\", ", fieldAccessor, " ?? \"\");")
-			}
-		}
-	}
+	generateTSURL(g, route)
 
 	g.P("    const sseHeaders = new Headers(this.headers);")
 	g.P("    if (options.headers) new Headers(options.headers).forEach((v, k) => sseHeaders.set(k, v));")

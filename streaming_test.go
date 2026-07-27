@@ -2,8 +2,10 @@ package connectaip
 
 import (
 	"context"
+	"iter"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -144,4 +146,80 @@ func TestSSEClientRequiresPostRoute(t *testing.T) {
 		t.Fatal("expected error due to GET/POST method mismatch, got nil")
 	}
 	t.Logf("method mismatch error (as expected): %v", streamErr)
+}
+
+// stubHTTPClient records the request it is handed and returns an empty 200, so a
+// test can assert on the URL the transport chain produced.
+type stubHTTPClient struct {
+	got *http.Request
+}
+
+func (s *stubHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	s.got = req
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{},
+		Body:       http.NoBody,
+		Request:    req,
+	}, nil
+}
+
+// TestSSEPathVarEscaping covers the streaming half of path-var encoding. The SSE
+// transport substitutes into an already-parsed URL, so it has to keep Path (decoded)
+// and RawPath (encoded) consistent — otherwise net/http re-encodes from Path and the
+// "/" inside a resource ID silently becomes a segment separator again.
+func TestSSEPathVarEscaping(t *testing.T) {
+	cases := map[string]struct {
+		placeholder string
+		val         string
+		wantEscaped string
+		wantDecoded string
+	}{
+		"single segment escapes slash": {
+			placeholder: "{name}",
+			val:         "staging - apps/docs",
+			wantEscaped: "/v1/items/staging%20-%20apps%2Fdocs",
+			wantDecoded: "/v1/items/staging - apps/docs",
+		},
+		"rest of path keeps separators": {
+			placeholder: "{name...}",
+			val:         "a b/versions/c d",
+			wantEscaped: "/v1/items/a%20b/versions/c%20d",
+			wantDecoded: "/v1/items/a b/versions/c d",
+		},
+		"plain id leaves path untouched": {
+			placeholder: "{name}",
+			val:         "production",
+			wantEscaped: "/v1/items/production",
+			wantDecoded: "/v1/items/production",
+		},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			next := &stubHTTPClient{}
+			transport := &pathVarSSETransport{
+				pathVarFn: func([]byte) iter.Seq2[string, string] {
+					return func(yield func(string, string) bool) {
+						yield(c.placeholder, c.val)
+					}
+				},
+				next: next,
+			}
+
+			req := httptest.NewRequest(http.MethodPost,
+				"http://example.test/v1/items/"+c.placeholder,
+				strings.NewReader(`{"message":{}}`))
+			if _, err := transport.Do(req); err != nil {
+				t.Fatalf("Do: %v", err)
+			}
+
+			if got := next.got.URL.EscapedPath(); got != c.wantEscaped {
+				t.Errorf("EscapedPath() = %q; want %q", got, c.wantEscaped)
+			}
+			if got := next.got.URL.Path; got != c.wantDecoded {
+				t.Errorf("Path = %q; want %q", got, c.wantDecoded)
+			}
+		})
+	}
 }

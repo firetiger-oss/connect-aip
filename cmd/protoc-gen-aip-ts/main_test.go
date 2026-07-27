@@ -57,3 +57,46 @@ func TestTSFixtureInvariants(t *testing.T) {
 		t.Error("fixture wrongly declares MixedCoverageServiceAIPClient implements Client<...> — that fails tsc because UnannotatedMethod is missing")
 	}
 }
+
+// TestTSPathVarEncoding pins that emitted clients percent-encode path variables.
+// Interpolated raw, a resource ID containing "/" (e.g. a deployment environment
+// named "staging - apps/docs") splits into an extra path segment and the request
+// stops matching its route, surfacing as a content-free 404.
+func TestTSPathVarEncoding(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	repoRoot := filepath.Join(filepath.Dir(file), "../..")
+	rel := "internal/testproto/testts/test_aip.ts"
+	data, err := os.ReadFile(filepath.Join(repoRoot, rel))
+	if err != nil {
+		t.Fatalf("read fixture %q: %v (regenerate via `cd internal/testproto && buf generate --template buf.gen.ts.yaml`)", rel, err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "export function encodePathVar(value: string, multiSegment: boolean): string {") {
+		t.Error("fixture missing the inlined encodePathVar runtime helper")
+	}
+
+	for _, want := range []string{
+		// Single-segment placeholder: the whole value is one segment, so "/" must
+		// be escaped along with everything else.
+		`url = url.replace("{name}", encodePathVar((request.name ?? "").replace("resources/", ""), false));`,
+		// Rest-of-path placeholder ({name=resources/*/versions/*}): the value spans
+		// several segments, so its separators stay literal.
+		`url = url.replace("{name...}", encodePathVar((request.name ?? "").replace("resources/", ""), true));`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("fixture missing %q", want)
+		}
+	}
+
+	// No path variable may reach the URL without going through encodePathVar.
+	for line := range strings.SplitSeq(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "url = url.replace(") && !strings.Contains(trimmed, "encodePathVar(") {
+			t.Errorf("unencoded path var substitution: %s", trimmed)
+		}
+	}
+}

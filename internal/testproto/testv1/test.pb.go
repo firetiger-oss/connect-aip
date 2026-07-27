@@ -555,6 +555,94 @@ func (*ListVersionsResponse) Descriptor() ([]byte, []int) {
 	return file_test_proto_rawDescGZIP(), []int{10}
 }
 
+type GetVersionRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetVersionRequest) Reset() {
+	*x = GetVersionRequest{}
+	mi := &file_test_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetVersionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetVersionRequest) ProtoMessage() {}
+
+func (x *GetVersionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_test_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetVersionRequest.ProtoReflect.Descriptor instead.
+func (*GetVersionRequest) Descriptor() ([]byte, []int) {
+	return file_test_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *GetVersionRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type GetVersionResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetVersionResponse) Reset() {
+	*x = GetVersionResponse{}
+	mi := &file_test_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetVersionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetVersionResponse) ProtoMessage() {}
+
+func (x *GetVersionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_test_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetVersionResponse.ProtoReflect.Descriptor instead.
+func (*GetVersionResponse) Descriptor() ([]byte, []int) {
+	return file_test_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *GetVersionResponse) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
 type DeleteResourceRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -564,7 +652,7 @@ type DeleteResourceRequest struct {
 
 func (x *DeleteResourceRequest) Reset() {
 	*x = DeleteResourceRequest{}
-	mi := &file_test_proto_msgTypes[11]
+	mi := &file_test_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -576,7 +664,7 @@ func (x *DeleteResourceRequest) String() string {
 func (*DeleteResourceRequest) ProtoMessage() {}
 
 func (x *DeleteResourceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_test_proto_msgTypes[11]
+	mi := &file_test_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -589,7 +677,7 @@ func (x *DeleteResourceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteResourceRequest.ProtoReflect.Descriptor instead.
 func (*DeleteResourceRequest) Descriptor() ([]byte, []int) {
-	return file_test_proto_rawDescGZIP(), []int{11}
+	return file_test_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *DeleteResourceRequest) GetName() string {
@@ -635,15 +723,21 @@ const file_test_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\x02 \x01(\tR\tpageToken\"\x16\n" +
-	"\x14ListVersionsResponse\"+\n" +
+	"\x14ListVersionsResponse\"'\n" +
+	"\x11GetVersionRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"(\n" +
+	"\x12GetVersionResponse\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"+\n" +
 	"\x15DeleteResourceRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name2\xb4\a\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name2\xbd\b\n" +
 	"\vTestService\x12\x81\x01\n" +
 	"\x0eCreateResource\x12).connectaip.test.v1.CreateResourceRequest\x1a*.connectaip.test.v1.CreateResourceResponse\"\x18\x82\xd3\xe4\x93\x02\x12:\x01*\"\r/v1/resources\x12~\n" +
 	"\vGetResource\x12&.connectaip.test.v1.GetResourceRequest\x1a'.connectaip.test.v1.GetResourceResponse\"\x1e\x82\xd3\xe4\x93\x02\x18\x12\x16/v1/{name=resources/*}\x12\x93\x01\n" +
 	"\x0eUpdateResource\x12).connectaip.test.v1.UpdateResourceRequest\x1a*.connectaip.test.v1.UpdateResourceResponse\"*\x82\xd3\xe4\x93\x02$:\x01*2\x1f/v1/{resource.name=resources/*}\x12{\n" +
 	"\rListResources\x12(.connectaip.test.v1.ListResourcesRequest\x1a).connectaip.test.v1.ListResourcesResponse\"\x15\x82\xd3\xe4\x93\x02\x0f\x12\r/v1/resources\x12\x8a\x01\n" +
-	"\fListVersions\x12'.connectaip.test.v1.ListVersionsRequest\x1a(.connectaip.test.v1.ListVersionsResponse\"'\x82\xd3\xe4\x93\x02!\x12\x1f/v1/{name=resources/*}/versions\x12\x8b\x01\n" +
+	"\fListVersions\x12'.connectaip.test.v1.ListVersionsRequest\x1a(.connectaip.test.v1.ListVersionsResponse\"'\x82\xd3\xe4\x93\x02!\x12\x1f/v1/{name=resources/*}/versions\x12\x86\x01\n" +
+	"\n" +
+	"GetVersion\x12%.connectaip.test.v1.GetVersionRequest\x1a&.connectaip.test.v1.GetVersionResponse\")\x82\xd3\xe4\x93\x02#\x12!/v1/{name=resources/*/versions/*}\x12\x8b\x01\n" +
 	"\x0fStreamResources\x12).connectaip.test.v1.CreateResourceRequest\x1a*.connectaip.test.v1.CreateResourceResponse\"\x1f\x82\xd3\xe4\x93\x02\x19:\x01*\"\x14/v1/resources:stream0\x01\x12s\n" +
 	"\x0eDeleteResource\x12).connectaip.test.v1.DeleteResourceRequest\x1a\x16.google.protobuf.Empty\"\x1e\x82\xd3\xe4\x93\x02\x18*\x16/v1/{name=resources/*}2\x89\x02\n" +
 	"\x14MixedCoverageService\x12\x88\x01\n" +
@@ -663,7 +757,7 @@ func file_test_proto_rawDescGZIP() []byte {
 	return file_test_proto_rawDescData
 }
 
-var file_test_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_test_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_test_proto_goTypes = []any{
 	(*Resource)(nil),               // 0: connectaip.test.v1.Resource
 	(*CreateResourceRequest)(nil),  // 1: connectaip.test.v1.CreateResourceRequest
@@ -676,8 +770,10 @@ var file_test_proto_goTypes = []any{
 	(*ListResourcesResponse)(nil),  // 8: connectaip.test.v1.ListResourcesResponse
 	(*ListVersionsRequest)(nil),    // 9: connectaip.test.v1.ListVersionsRequest
 	(*ListVersionsResponse)(nil),   // 10: connectaip.test.v1.ListVersionsResponse
-	(*DeleteResourceRequest)(nil),  // 11: connectaip.test.v1.DeleteResourceRequest
-	(*emptypb.Empty)(nil),          // 12: google.protobuf.Empty
+	(*GetVersionRequest)(nil),      // 11: connectaip.test.v1.GetVersionRequest
+	(*GetVersionResponse)(nil),     // 12: connectaip.test.v1.GetVersionResponse
+	(*DeleteResourceRequest)(nil),  // 13: connectaip.test.v1.DeleteResourceRequest
+	(*emptypb.Empty)(nil),          // 14: google.protobuf.Empty
 }
 var file_test_proto_depIdxs = []int32{
 	0,  // 0: connectaip.test.v1.CreateResourceRequest.resource:type_name -> connectaip.test.v1.Resource
@@ -691,21 +787,23 @@ var file_test_proto_depIdxs = []int32{
 	5,  // 8: connectaip.test.v1.TestService.UpdateResource:input_type -> connectaip.test.v1.UpdateResourceRequest
 	7,  // 9: connectaip.test.v1.TestService.ListResources:input_type -> connectaip.test.v1.ListResourcesRequest
 	9,  // 10: connectaip.test.v1.TestService.ListVersions:input_type -> connectaip.test.v1.ListVersionsRequest
-	1,  // 11: connectaip.test.v1.TestService.StreamResources:input_type -> connectaip.test.v1.CreateResourceRequest
-	11, // 12: connectaip.test.v1.TestService.DeleteResource:input_type -> connectaip.test.v1.DeleteResourceRequest
-	3,  // 13: connectaip.test.v1.MixedCoverageService.AnnotatedMethod:input_type -> connectaip.test.v1.GetResourceRequest
-	3,  // 14: connectaip.test.v1.MixedCoverageService.UnannotatedMethod:input_type -> connectaip.test.v1.GetResourceRequest
-	2,  // 15: connectaip.test.v1.TestService.CreateResource:output_type -> connectaip.test.v1.CreateResourceResponse
-	4,  // 16: connectaip.test.v1.TestService.GetResource:output_type -> connectaip.test.v1.GetResourceResponse
-	6,  // 17: connectaip.test.v1.TestService.UpdateResource:output_type -> connectaip.test.v1.UpdateResourceResponse
-	8,  // 18: connectaip.test.v1.TestService.ListResources:output_type -> connectaip.test.v1.ListResourcesResponse
-	10, // 19: connectaip.test.v1.TestService.ListVersions:output_type -> connectaip.test.v1.ListVersionsResponse
-	2,  // 20: connectaip.test.v1.TestService.StreamResources:output_type -> connectaip.test.v1.CreateResourceResponse
-	12, // 21: connectaip.test.v1.TestService.DeleteResource:output_type -> google.protobuf.Empty
-	4,  // 22: connectaip.test.v1.MixedCoverageService.AnnotatedMethod:output_type -> connectaip.test.v1.GetResourceResponse
-	4,  // 23: connectaip.test.v1.MixedCoverageService.UnannotatedMethod:output_type -> connectaip.test.v1.GetResourceResponse
-	15, // [15:24] is the sub-list for method output_type
-	6,  // [6:15] is the sub-list for method input_type
+	11, // 11: connectaip.test.v1.TestService.GetVersion:input_type -> connectaip.test.v1.GetVersionRequest
+	1,  // 12: connectaip.test.v1.TestService.StreamResources:input_type -> connectaip.test.v1.CreateResourceRequest
+	13, // 13: connectaip.test.v1.TestService.DeleteResource:input_type -> connectaip.test.v1.DeleteResourceRequest
+	3,  // 14: connectaip.test.v1.MixedCoverageService.AnnotatedMethod:input_type -> connectaip.test.v1.GetResourceRequest
+	3,  // 15: connectaip.test.v1.MixedCoverageService.UnannotatedMethod:input_type -> connectaip.test.v1.GetResourceRequest
+	2,  // 16: connectaip.test.v1.TestService.CreateResource:output_type -> connectaip.test.v1.CreateResourceResponse
+	4,  // 17: connectaip.test.v1.TestService.GetResource:output_type -> connectaip.test.v1.GetResourceResponse
+	6,  // 18: connectaip.test.v1.TestService.UpdateResource:output_type -> connectaip.test.v1.UpdateResourceResponse
+	8,  // 19: connectaip.test.v1.TestService.ListResources:output_type -> connectaip.test.v1.ListResourcesResponse
+	10, // 20: connectaip.test.v1.TestService.ListVersions:output_type -> connectaip.test.v1.ListVersionsResponse
+	12, // 21: connectaip.test.v1.TestService.GetVersion:output_type -> connectaip.test.v1.GetVersionResponse
+	2,  // 22: connectaip.test.v1.TestService.StreamResources:output_type -> connectaip.test.v1.CreateResourceResponse
+	14, // 23: connectaip.test.v1.TestService.DeleteResource:output_type -> google.protobuf.Empty
+	4,  // 24: connectaip.test.v1.MixedCoverageService.AnnotatedMethod:output_type -> connectaip.test.v1.GetResourceResponse
+	4,  // 25: connectaip.test.v1.MixedCoverageService.UnannotatedMethod:output_type -> connectaip.test.v1.GetResourceResponse
+	16, // [16:26] is the sub-list for method output_type
+	6,  // [6:16] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
 	6,  // [6:6] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name
@@ -722,7 +820,7 @@ func file_test_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_test_proto_rawDesc), len(file_test_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

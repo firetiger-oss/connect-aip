@@ -34,6 +34,17 @@ Each plugin needs a corresponding regression test against the fixture proto.
 
 **Why this matters**: the three languages are public API surface in lockstep; drifting one is a silent regression nobody catches until a downstream consumer files a bug.
 
+## Path variables are always percent-encoded
+
+Resource IDs are arbitrary strings — they can contain spaces, `/`, `?`, `#`, `%`. Every client interpolating a value into a URL path must encode it, or a value containing `/` silently becomes a segment separator: the request stops matching its `ServeMux` route and the caller gets a content-free 404 having never reached the service.
+
+The rule differs by placeholder shape, and all three clients implement it (`escapePathVar` in `client.go`, `_escape_path_var` in the Python runtime, the emitted `encodePathVar` in TS):
+
+- `{name}` — one segment, so escape the whole value including `/`.
+- `{name...}` — a rest-of-path wildcard that deliberately spans segments, so escape each segment and keep the separators literal.
+
+The Go client also has to keep `URL.Path` (decoded) and `URL.RawPath` (encoded) in step; the SSE transport substitutes into an already-parsed URL, so it builds both. Fixture coverage lives on `GetVersion` (`{name=resources/*/versions/*}`), the only multi-wildcard route.
+
 ## Test fixture regeneration
 
 When `internal/testproto/test.proto` changes, regenerate via:

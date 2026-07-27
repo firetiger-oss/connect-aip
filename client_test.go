@@ -750,3 +750,103 @@ func TestCallRequestPropagatesTrailers(t *testing.T) {
 		t.Errorf("expected X-Server-Trailer=trailer-value, got %q (full trailers: %v)", got, resp.Trailer())
 	}
 }
+
+func TestEscapePathVar(t *testing.T) {
+	cases := map[string]struct {
+		val         string
+		placeholder string
+		want        string
+	}{
+		"plain id":                     {"production", "{name}", "production"},
+		"id with slash":                {"staging - apps/docs", "{name}", "staging%20-%20apps%2Fdocs"},
+		"id with query and fragment":   {"a?b#c", "{name}", "a%3Fb%23c"},
+		"id with percent":              {"100%", "{name}", "100%25"},
+		"colon stays legible":          {"env:staging", "{name}", "env:staging"},
+		"rest of path keeps its slash": {"abc/versions/v1", "{name...}", "abc/versions/v1"},
+		"rest of path escapes within":  {"a b/c d", "{name...}", "a%20b/c%20d"},
+		"rest of path single segment":  {"a b", "{name...}", "a%20b"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := escapePathVar(c.val, c.placeholder); got != c.want {
+				t.Errorf("escapePathVar(%q, %q) = %q; want %q", c.val, c.placeholder, got, c.want)
+			}
+		})
+	}
+}
+
+// TestClientPathVarWithSlashRoutes is the regression test for resource IDs that
+// contain "/" — e.g. a deployment environment auto-discovered from a Vercel
+// monorepo build, named "staging - apps/docs". Interpolated raw, the extra
+// segment stops the request matching its ServeMux route and the caller gets a
+// content-free 404 instead of ever reaching the service.
+func TestClientPathVarWithSlashRoutes(t *testing.T) {
+	const id = "staging - apps/docs"
+
+	var gotPathValue string
+	mux := http.NewServeMux()
+	mux.HandleFunc("PATCH /v1/items/{name}", func(w http.ResponseWriter, r *http.Request) {
+		gotPathValue = r.PathValue("name")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"ok"}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := NewClient[testRequest, testResponse](
+		server.Client(),
+		server.URL,
+		MethodSpec{
+			HTTPMethod: "PATCH",
+			URLPattern: "/v1/items/{name}",
+			PathVars:   []PathVar{{Placeholder: "{name}", Prefix: "items/"}},
+		},
+		func(req *testRequest) map[string]string {
+			return map[string]string{"{name}": req.Name}
+		},
+		nil,
+	)
+
+	if _, err := client.Call(t.Context(), &testRequest{Name: "items/" + id}); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if gotPathValue != id {
+		t.Errorf("handler got name=%q, want %q", gotPathValue, id)
+	}
+}
+
+// TestClientRestOfPathVarKeepsSeparators pins the other half of the rule: a
+// rest-of-path placeholder spans several segments, so its own separators must
+// survive while the characters inside each segment are still escaped.
+func TestClientRestOfPathVarKeepsSeparators(t *testing.T) {
+	var gotPathValue string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/items/{name...}", func(w http.ResponseWriter, r *http.Request) {
+		gotPathValue = r.PathValue("name")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"ok"}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := NewClient[testRequest, testResponse](
+		server.Client(),
+		server.URL,
+		MethodSpec{
+			HTTPMethod: "GET",
+			URLPattern: "/v1/items/{name...}",
+			PathVars:   []PathVar{{Placeholder: "{name...}", Prefix: "items/"}},
+		},
+		func(req *testRequest) map[string]string {
+			return map[string]string{"{name...}": req.Name}
+		},
+		nil,
+	)
+
+	if _, err := client.Call(t.Context(), &testRequest{Name: "items/a b/versions/c d"}); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if want := "a b/versions/c d"; gotPathValue != want {
+		t.Errorf("handler got name=%q, want %q", gotPathValue, want)
+	}
+}

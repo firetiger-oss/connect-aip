@@ -42,6 +42,11 @@ def _list_versions_query(req: pb2.ListVersionsRequest) -> dict[str, str]:
         params["pageToken"] = req.page_token
     return params
 
+def _get_version_path_vars(req: pb2.GetVersionRequest) -> dict[str, str]:
+    return {
+        "{name...}": req.name,
+    }
+
 def _delete_resource_path_vars(req: pb2.DeleteResourceRequest) -> dict[str, str]:
     return {
         "{name}": req.name,
@@ -99,6 +104,15 @@ class TestServiceAIPClient:
             response_type=pb2.ListVersionsResponse,
             path_var_fn=_list_versions_path_vars,
             query_fn=_list_versions_query,
+            headers=headers,
+        )
+        self._get_version = Client[pb2.GetVersionRequest, pb2.GetVersionResponse](
+            session=session,
+            base_url=base_url,
+            spec=MethodSpec("GET", "/v1/resources/{name...}", [PathVar("{name...}", "resources/")]),
+            response_type=pb2.GetVersionResponse,
+            path_var_fn=_get_version_path_vars,
+            query_fn=None,
             headers=headers,
         )
         self._stream_resources = SSEClient[pb2.CreateResourceRequest, pb2.CreateResourceResponse](
@@ -165,6 +179,15 @@ class TestServiceAIPClient:
         timeout: float | None = None,
     ) -> pb2.ListVersionsResponse:
         return self._list_versions.call(request, headers=headers, timeout=timeout)
+
+    def get_version(
+        self,
+        request: pb2.GetVersionRequest,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> pb2.GetVersionResponse:
+        return self._get_version.call(request, headers=headers, timeout=timeout)
 
     def stream_resources(
         self,

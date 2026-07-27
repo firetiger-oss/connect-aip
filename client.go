@@ -47,13 +47,18 @@ func (t *pathVarSSETransport) Do(req *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("read SSE request body: %w", err)
 	}
 
+	// Substituted twice: newPath carries the decoded values (URL.Path) and
+	// newRawPath the percent-encoded ones (URL.RawPath). Both start from the
+	// pattern, whose literal segments need no escaping.
 	newPath := req.URL.Path
+	newRawPath := req.URL.Path
 	var nested struct {
 		Message json.RawMessage `json:"message"`
 	}
 	if json.Unmarshal(bodyBytes, &nested) == nil && len(nested.Message) > 0 {
 		for placeholder, val := range t.pathVarFn(nested.Message) {
 			newPath = strings.Replace(newPath, placeholder, val, 1)
+			newRawPath = strings.Replace(newRawPath, placeholder, escapePathVar(val, placeholder), 1)
 		}
 	}
 
@@ -63,7 +68,12 @@ func (t *pathVarSSETransport) Do(req *http.Request) (*http.Response, error) {
 	if newPath != req.URL.Path {
 		newURL := *req.URL
 		newURL.Path = newPath
-		newURL.RawPath = "" // recomputed from Path by net/http
+		// RawPath is honoured only when it decodes back to Path; when a value
+		// needed no escaping, leave it empty and let net/http encode Path.
+		newURL.RawPath = ""
+		if newRawPath != newPath {
+			newURL.RawPath = newRawPath
+		}
 		req.URL = &newURL
 	}
 	return t.next.Do(req)
@@ -176,6 +186,25 @@ type PathVar struct {
 	Prefix      string // e.g., "credentials/" to strip from value
 }
 
+// escapePathVar percent-encodes a path variable's value for interpolation into a
+// URL path. Resource IDs are arbitrary strings, so they can contain characters
+// that are structural in a URL — most importantly "/", which would otherwise
+// split one path segment into several and stop the request from matching its
+// route at all (a bare 404 rather than a service-level error).
+//
+// Rest-of-path placeholders ("{name...}") deliberately span several segments, so
+// their separators stay literal and each segment is escaped on its own.
+func escapePathVar(val, placeholder string) string {
+	if !strings.HasSuffix(placeholder, "...}") {
+		return url.PathEscape(val)
+	}
+	segments := strings.Split(val, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return strings.Join(segments, "/")
+}
+
 // Client is a generic REST client for a single method.
 // It uses connect.HTTPClient for compatibility with ConnectRPC clients.
 type Client[Req, Resp any] struct {
@@ -240,7 +269,7 @@ func (c *Client[Req, Resp]) CallRequest(ctx context.Context, connectReq *connect
 				if pv.Prefix != "" {
 					val = strings.TrimPrefix(val, pv.Prefix)
 				}
-				urlPath = strings.Replace(urlPath, pv.Placeholder, val, 1)
+				urlPath = strings.Replace(urlPath, pv.Placeholder, escapePathVar(val, pv.Placeholder), 1)
 			}
 		}
 	}

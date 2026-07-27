@@ -48,6 +48,9 @@ func NewTestServiceAIPHandler(
 		if !yield("GET /v1/resources/{name}/versions", handleTestServiceListVersions(connectHandler)) {
 			return
 		}
+		if !yield("GET /v1/resources/{name_0}/versions/{name_1}", handleTestServiceGetVersion(connectHandler)) {
+			return
+		}
 		if !yield("POST /v1/resources:stream", handleTestServiceStreamResources(connectHandler)) {
 			return
 		}
@@ -87,6 +90,12 @@ func handleTestServiceListVersions(connectHandler http.Handler) http.Handler {
 	})
 }
 
+func handleTestServiceGetVersion(connectHandler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		connectaip.ForwardWithBody[*testv1.GetVersionRequest, *testv1.GetVersionResponse](w, req, TestServiceGetVersionProcedure, connectHandler, &testv1.GetVersionRequest{Name: "resources/" + req.PathValue("name_0") + "/versions/" + req.PathValue("name_1")})
+	})
+}
+
 func handleTestServiceStreamResources(connectHandler http.Handler) http.Handler {
 	return &connectsse.Server{Handler: connectHandler}
 }
@@ -109,6 +118,7 @@ type testServiceAIPClient struct {
 	updateResource  *connectaip.Client[testv1.UpdateResourceRequest, testv1.UpdateResourceResponse]
 	listResources   *connectaip.Client[testv1.ListResourcesRequest, testv1.ListResourcesResponse]
 	listVersions    *connectaip.Client[testv1.ListVersionsRequest, testv1.ListVersionsResponse]
+	getVersion      *connectaip.Client[testv1.GetVersionRequest, testv1.GetVersionResponse]
 	streamResources *connect.Client[testv1.CreateResourceRequest, testv1.CreateResourceResponse]
 	deleteResource  *connectaip.Client[testv1.DeleteResourceRequest, emptypb.Empty]
 }
@@ -182,6 +192,21 @@ func NewTestServiceAIPClient(httpClient connect.HTTPClient, baseURL string, opts
 			TestServiceListVersionsQuery,
 			opts...,
 		),
+		getVersion: connectaip.NewClient[testv1.GetVersionRequest, testv1.GetVersionResponse](
+			httpClient, baseURL,
+			connectaip.MethodSpec{
+				HTTPMethod: "GET",
+				URLPattern: "/v1/resources/{name_0}/versions/{name_1}",
+				Procedure:  TestServiceGetVersionProcedure,
+				PathVars: []connectaip.PathVar{
+					{Placeholder: "{name_0}", Prefix: ""},
+					{Placeholder: "{name_1}", Prefix: ""},
+				},
+			},
+			TestServiceGetVersionPathVars,
+			func(*testv1.GetVersionRequest) map[string]string { return nil },
+			opts...,
+		),
 		streamResources: connect.NewClient[testv1.CreateResourceRequest, testv1.CreateResourceResponse](
 			connectaip.NewSSEClient(httpClient, baseURL+"/v1/resources:stream", nil, opts...),
 			connectaip.SSEProcedureURL(baseURL, TestServiceStreamResourcesProcedure),
@@ -219,6 +244,13 @@ func TestServiceUpdateResourcePathVars(req *testv1.UpdateResourceRequest) map[st
 func TestServiceListVersionsPathVars(req *testv1.ListVersionsRequest) map[string]string {
 	return map[string]string{
 		"{name}": req.GetName(),
+	}
+}
+
+func TestServiceGetVersionPathVars(req *testv1.GetVersionRequest) map[string]string {
+	return map[string]string{
+		"{name_0}": connectaip.SplitMultiWildcard(req.GetName(), "resources/", "/versions/", 0),
+		"{name_1}": connectaip.SplitMultiWildcard(req.GetName(), "resources/", "/versions/", 1),
 	}
 }
 
@@ -271,6 +303,10 @@ func (c *testServiceAIPClient) ListResources(ctx context.Context, req *connect.R
 
 func (c *testServiceAIPClient) ListVersions(ctx context.Context, req *connect.Request[testv1.ListVersionsRequest]) (*connect.Response[testv1.ListVersionsResponse], error) {
 	return c.listVersions.CallRequest(ctx, req)
+}
+
+func (c *testServiceAIPClient) GetVersion(ctx context.Context, req *connect.Request[testv1.GetVersionRequest]) (*connect.Response[testv1.GetVersionResponse], error) {
+	return c.getVersion.CallRequest(ctx, req)
 }
 
 func (c *testServiceAIPClient) StreamResources(ctx context.Context, req *connect.Request[testv1.CreateResourceRequest]) (*connect.ServerStreamForClient[testv1.CreateResourceResponse], error) {
