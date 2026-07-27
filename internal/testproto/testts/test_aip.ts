@@ -69,17 +69,19 @@ export function splitMultiWildcard(
 ): string {
   let rest = value.startsWith(prefix) ? value.slice(prefix.length) : value;
   for (let i = 0; i < idx; i++) {
-    const at = rest.indexOf(seps[i]);
+    const sep = seps[i];
+    if (sep === undefined) return "";
+    const at = rest.indexOf(sep);
     if (at < 0) return "";
-    rest = rest.slice(at + seps[i].length);
+    rest = rest.slice(at + sep.length);
   }
-  if (idx < seps.length) {
-    const at = rest.indexOf(seps[idx]);
-    // A missing separator means the name is malformed; return what's left
-    // rather than nothing, matching SplitMultiWildcard in the Go runtime.
-    return at < 0 ? rest : rest.slice(0, at);
-  }
-  return rest;
+  const sep = seps[idx];
+  // Past the last separator this is the final wildcard, which takes the
+  // remainder. A missing separator earlier means the name is malformed, and
+  // returning what's left matches SplitMultiWildcard in the Go runtime.
+  if (sep === undefined) return rest;
+  const at = rest.indexOf(sep);
+  return at < 0 ? rest : rest.slice(0, at);
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: recursive JSON walker
