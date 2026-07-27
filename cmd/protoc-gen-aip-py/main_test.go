@@ -1,6 +1,10 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -200,5 +204,115 @@ func TestPyTypeResolverWKTCollisionOrderIndependent(t *testing.T) {
 	}
 	if len(seen) != 2 {
 		t.Errorf("expected 2 distinct imported identifiers, got %d in: %q", len(seen), got)
+	}
+}
+
+// TestParsePathPatternWildcardShapes pins how each pattern shape maps onto a
+// ServeMux path, because that decision drives path-var encoding: a single-segment
+// placeholder has its whole value escaped ("/" included), while a rest-of-path one
+// keeps its separators. Getting it wrong sends requests to a path the server never
+// registered, which surfaces as a bare 404.
+//
+// These expectations must stay identical across protoc-gen-aip-{go,ts,py}: the Go
+// plugin's ServeMux path is what the server registers, so the other two have to
+// build the same shape.
+func TestParsePathPatternWildcardShapes(t *testing.T) {
+	cases := map[string]struct {
+		pattern  string
+		wantPath string
+		wantVars []string // "name[:prefix]" per var, or "name!multi(prefix|sep|idx)"
+	}{
+		"single trailing wildcard": {
+			pattern:  "/v1/{name=resources/*}",
+			wantPath: "/v1/resources/{name}",
+			wantVars: []string{"name:resources/"},
+		},
+		"wildcard with literal suffix outside braces": {
+			pattern:  "/v1/{name=resources/*}/versions",
+			wantPath: "/v1/resources/{name}/versions",
+			wantVars: []string{"name:resources/"},
+		},
+		"multi wildcard expands to one segment each": {
+			pattern:  "/v1/{name=resources/*/versions/*}",
+			wantPath: "/v1/resources/{name_0}/versions/{name_1}",
+			wantVars: []string{"name_0!multi(resources/|/versions/|0)", "name_1!multi(resources/|/versions/|1)"},
+		},
+		"rest of path when a literal trails inside braces": {
+			pattern:  "/v1/{name=resources/*/versions}",
+			wantPath: "/v1/resources/{name...}",
+			wantVars: []string{"name:resources/"},
+		},
+		"nested field path uses the last segment": {
+			pattern:  "/v1/{resource.name=resources/*}",
+			wantPath: "/v1/resources/{name}",
+			wantVars: []string{"name:resources/"},
+		},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			vars, path, ok := parsePathPattern(c.pattern)
+			if !ok {
+				t.Fatalf("parsePathPattern(%q) not ok", c.pattern)
+			}
+			if path != c.wantPath {
+				t.Errorf("path = %q; want %q", path, c.wantPath)
+			}
+			var got []string
+			for _, pv := range vars {
+				if pv.multi != nil {
+					got = append(got, fmt.Sprintf("%s!multi(%s|%s|%d)",
+						pv.name, pv.multi.prefix, strings.Join(pv.multi.seps, ","), pv.multi.idx))
+					continue
+				}
+				got = append(got, pv.name+":"+pv.prefix)
+			}
+			if strings.Join(got, " ") != strings.Join(c.wantVars, " ") {
+				t.Errorf("vars = %v; want %v", got, c.wantVars)
+			}
+		})
+	}
+}
+
+// TestPyPathVarEncoding is the Python counterpart to protoc-gen-aip-ts's
+// TestTSPathVarEncoding: the emitted client must hand the runtime the same
+// placeholder shapes the Go plugin registers as routes, so the runtime's escaping
+// (whole value for a single segment, per-segment for rest-of-path) lines up.
+//
+// Regenerate the fixture if test.proto changes:
+//
+//	go install ./cmd/protoc-gen-aip-py
+//	cd internal/testproto && PATH=$HOME/go/bin:$PATH buf generate --template buf.gen.py.yaml
+func TestPyPathVarEncoding(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	rel := "internal/testproto/testpy/test_aip.py"
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(file), "../..", rel))
+	if err != nil {
+		t.Fatalf("read fixture %q: %v (regenerate via `cd internal/testproto && buf generate --template buf.gen.py.yaml`)", rel, err)
+	}
+	content := string(data)
+
+	for _, want := range []string{
+		// Multi-wildcard: one route segment per wildcard, matching the ServeMux
+		// path protoc-gen-aip-go registers, with each value split back out of the
+		// single proto field the pattern matched.
+		`"GET", "/v1/resources/{name_0}/versions/{name_1}"`,
+		`"{name_0}": split_multi_wildcard(req.name, "resources/", ["/versions/"], 0),`,
+		`"{name_1}": split_multi_wildcard(req.name, "resources/", ["/versions/"], 1),`,
+		// The helper has to be imported for the emitted module to run at all.
+		`from connectaip import Client, MethodSpec, PathVar, SSEClient, split_multi_wildcard`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("fixture missing %q", want)
+		}
+	}
+
+	// A rest-of-path placeholder keeps its separators, so it must never be emitted
+	// for a pattern the server registers as separate segments.
+	if strings.Contains(content, `"/v1/resources/{name...}/versions/`) {
+		t.Error("fixture builds a rest-of-path placeholder for a multi-segment route")
 	}
 }

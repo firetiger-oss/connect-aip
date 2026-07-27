@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"google.golang.org/genproto/googleapis/api/annotations"
@@ -137,6 +138,45 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 	g.P("  return new AIPError(httpStatusToCode[response.status] ?? 13, body);")
 	g.P("}")
 	g.P()
+	g.P("// Percent-encodes a path variable's value for interpolation into a URL path.")
+	g.P("// Resource IDs are arbitrary strings, so they can contain characters that are")
+	g.P("// structural in a URL — most importantly \"/\", which would otherwise split one")
+	g.P("// path segment into several and stop the request from matching its route at all")
+	g.P("// (a bare 404 rather than a service-level error). Rest-of-path placeholders")
+	g.P("// (\"{name...}\") deliberately span several segments, so their separators stay")
+	g.P("// literal and each segment is encoded on its own.")
+	g.P("export function encodePathVar(value: string, multiSegment: boolean): string {")
+	g.P("  if (!multiSegment) return encodeURIComponent(value);")
+	g.P("  return value.split(\"/\").map((segment) => encodeURIComponent(segment)).join(\"/\");")
+	g.P("}")
+	g.P()
+	g.P("// Extracts one wildcard's value from a resource name matched by a multi-wildcard")
+	g.P("// pattern such as {name=resources/*/versions/*}, which the server registers as")
+	g.P("// one route segment per wildcard. Cutting at the first occurrence of each")
+	g.P("// separator (rather than splitting on every occurrence) keeps the round trip")
+	g.P("// exact: the server rebuilds the name by joining the values back with the same")
+	g.P("// separators, so the final value has to carry the whole remainder.")
+	g.P("export function splitMultiWildcard(")
+	g.P("  value: string,")
+	g.P("  prefix: string,")
+	g.P("  seps: string[],")
+	g.P("  idx: number,")
+	g.P("): string {")
+	g.P("  let rest = value.startsWith(prefix) ? value.slice(prefix.length) : value;")
+	g.P("  for (let i = 0; i < idx; i++) {")
+	g.P("    const at = rest.indexOf(seps[i]);")
+	g.P("    if (at < 0) return \"\";")
+	g.P("    rest = rest.slice(at + seps[i].length);")
+	g.P("  }")
+	g.P("  if (idx < seps.length) {")
+	g.P("    const at = rest.indexOf(seps[idx]);")
+	g.P("    // A missing separator means the name is malformed; return what's left")
+	g.P("    // rather than nothing, matching SplitMultiWildcard in the Go runtime.")
+	g.P("    return at < 0 ? rest : rest.slice(0, at);")
+	g.P("  }")
+	g.P("  return rest;")
+	g.P("}")
+	g.P()
 	g.P("// biome-ignore lint/suspicious/noExplicitAny: recursive JSON walker")
 	g.P("export function sanitizeAny(data: any, registry: Registry): any {")
 	g.P("  if (Array.isArray(data)) {")
@@ -208,6 +248,23 @@ type pathVar struct {
 	fieldPath string
 	prefix    string
 	wildcard  bool
+	// multi is set when this variable is one wildcard of a proto field that spans
+	// several path segments; its value has to be split out of that field.
+	multi *multiVar
+}
+
+// multiVar describes one wildcard of a field matched by a multi-wildcard pattern,
+// e.g. {name=resources/*/versions/*} → resources/{name_0}/versions/{name_1}.
+//
+// The expansion mirrors protoc-gen-aip-go, because that plugin's ServeMux path is
+// what the server actually registers: one route segment per wildcard. Emitting a
+// single rest-of-path placeholder here instead would send the field's own "/"
+// separators as real separators, so any ID containing "/" would miss the route.
+type multiVar struct {
+	fieldPath string
+	prefix    string   // literal before the first wildcard, e.g. "resources/"
+	seps      []string // seps[i] is the literal between wildcard i and i+1
+	idx       int
 }
 
 // tsTypeResolver tracks message types referenced by the file under generation
@@ -457,11 +514,58 @@ func parsePathPattern(pattern string) ([]pathVar, string, bool) {
 				result.WriteString(prefix)
 			}
 
-			useWildcard := isRestOfPath
+			// A rest-of-path wildcard can only be the last thing in a ServeMux
+			// pattern, so a wildcard with a literal after it stays single-segment.
+			afterBrace := pattern[i+end+1:]
+			isAtEnd := afterBrace == "" || afterBrace == "/"
+			useWildcard := isRestOfPath && isAtEnd
 
 			sanitizedName := fieldPath
 			if lastDot := strings.LastIndex(fieldPath, "."); lastDot >= 0 {
 				sanitizedName = fieldPath[lastDot+1:]
+			}
+
+			// Multi-wildcard expansion, matching protoc-gen-aip-go: one route
+			// segment per wildcard, e.g. {name=resources/*/versions/*} becomes
+			// resources/{name_0}/versions/{name_1}. The value of each sub-var is
+			// split back out of the single proto field at emission time.
+			if starCount := strings.Count(varPattern, "*"); starCount > 1 {
+				parts := strings.Split(varPattern, "*") // e.g. ["resources/", "/versions/", ""]
+				numWildcards := len(parts) - 1
+
+				seps := make([]string, numWildcards-1)
+				for si := range seps {
+					seps[si] = parts[si+1]
+				}
+
+				for wi := range numWildcards {
+					result.WriteString("{")
+					result.WriteString(fmt.Sprintf("%s_%d", sanitizedName, wi))
+					result.WriteString("}")
+					if wi < numWildcards-1 {
+						result.WriteString(parts[wi+1])
+					}
+				}
+				if trailing := parts[numWildcards]; trailing != "" {
+					result.WriteString(trailing)
+				}
+
+				for wi := range numWildcards {
+					pathVars = append(pathVars, pathVar{
+						name:      fmt.Sprintf("%s_%d", sanitizedName, wi),
+						fieldPath: fieldPath,
+						wildcard:  true,
+						multi: &multiVar{
+							fieldPath: fieldPath,
+							prefix:    parts[0],
+							seps:      seps,
+							idx:       wi,
+						},
+					})
+				}
+
+				i += end + 1
+				continue
 			}
 
 			result.WriteString("{")
@@ -648,6 +752,46 @@ func generateSSEHelper(g *protogen.GeneratedFile) {
 	g.P()
 }
 
+// generateTSURL emits the `url` binding for a method: the ServeMux path with each
+// path variable substituted in, percent-encoded via encodePathVar so that values
+// containing "/" (or spaces, "?", "#", …) stay inside the segment they belong to.
+// Shared by the unary and streaming emitters so the two can't drift.
+func generateTSURL(g *protogen.GeneratedFile, route routeInfo) {
+	if len(route.pathVars) == 0 {
+		g.P("    const url = `${this.baseUrl}", route.serveMuxPath, "`;")
+		return
+	}
+
+	g.P("    let url = `${this.baseUrl}", route.serveMuxPath, "`;")
+	for _, pv := range route.pathVars {
+		fieldAccessor := tsFieldAccessor(pv.fieldPath)
+		placeholder := "{" + pv.name
+		// A rest-of-path placeholder spans several segments, so its own "/"
+		// separators must survive encoding.
+		multiSegment := pv.wildcard && strings.Contains(route.serveMuxPath, pv.name+"...")
+		if multiSegment {
+			placeholder += "..."
+		}
+		placeholder += "}"
+
+		value := fieldAccessor + " ?? \"\""
+		switch {
+		case pv.multi != nil:
+			// One wildcard of a multi-wildcard field: split its value out of the
+			// field, then encode it as the single segment it occupies.
+			seps := make([]string, 0, len(pv.multi.seps))
+			for _, sep := range pv.multi.seps {
+				seps = append(seps, strconv.Quote(sep))
+			}
+			value = fmt.Sprintf("splitMultiWildcard(%s, %s, [%s], %d)",
+				value, strconv.Quote(pv.multi.prefix), strings.Join(seps, ", "), pv.multi.idx)
+		case pv.prefix != "":
+			value = "(" + value + ").replace(\"" + pv.prefix + "\", \"\")"
+		}
+		g.P("    url = url.replace(\"", placeholder, "\", encodePathVar(", value, ", ", multiSegment, "));")
+	}
+}
+
 func generateTSMethod(g *protogen.GeneratedFile, route routeInfo, resolver *tsTypeResolver) {
 	methodName := lowerFirst(route.rpcMethod)
 	inputType, inputSchema := resolver.resolve(route.inputType)
@@ -664,25 +808,7 @@ func generateTSMethod(g *protogen.GeneratedFile, route routeInfo, resolver *tsTy
 	g.P("  ): Promise<", outputType, "> {")
 	g.P("    const msg = create(", inputSchema, ", request as MessageInitShape<typeof ", inputSchema, ">);")
 
-	if len(route.pathVars) == 0 {
-		g.P("    const url = `${this.baseUrl}", route.serveMuxPath, "`;")
-	} else {
-		g.P("    let url = `${this.baseUrl}", route.serveMuxPath, "`;")
-		for _, pv := range route.pathVars {
-			fieldAccessor := tsFieldAccessor(pv.fieldPath)
-			placeholder := "{" + pv.name
-			if pv.wildcard && strings.Contains(route.serveMuxPath, pv.name+"...") {
-				placeholder += "..."
-			}
-			placeholder += "}"
-
-			if pv.prefix != "" {
-				g.P("    url = url.replace(\"", placeholder, "\", (", fieldAccessor, " ?? \"\").replace(\"", pv.prefix, "\", \"\"));")
-			} else {
-				g.P("    url = url.replace(\"", placeholder, "\", ", fieldAccessor, " ?? \"\");")
-			}
-		}
-	}
+	generateTSURL(g, route)
 	g.P()
 
 	if route.method == "GET" || route.method == "DELETE" {
@@ -730,24 +856,7 @@ func generateTSStreamingMethod(g *protogen.GeneratedFile, route routeInfo, metho
 	g.P("  ): AsyncGenerator<", outputType, "> {")
 	g.P("    const msg = create(", inputSchema, ", request as MessageInitShape<typeof ", inputSchema, ">);")
 
-	if len(route.pathVars) == 0 {
-		g.P("    const url = `${this.baseUrl}", route.serveMuxPath, "`;")
-	} else {
-		g.P("    let url = `${this.baseUrl}", route.serveMuxPath, "`;")
-		for _, pv := range route.pathVars {
-			fieldAccessor := tsFieldAccessor(pv.fieldPath)
-			placeholder := "{" + pv.name
-			if pv.wildcard && strings.Contains(route.serveMuxPath, pv.name+"...") {
-				placeholder += "..."
-			}
-			placeholder += "}"
-			if pv.prefix != "" {
-				g.P("    url = url.replace(\"", placeholder, "\", (", fieldAccessor, " ?? \"\").replace(\"", pv.prefix, "\", \"\"));")
-			} else {
-				g.P("    url = url.replace(\"", placeholder, "\", ", fieldAccessor, " ?? \"\");")
-			}
-		}
-	}
+	generateTSURL(g, route)
 
 	g.P("    const sseHeaders = new Headers(this.headers);")
 	g.P("    if (options.headers) new Headers(options.headers).forEach((v, k) => sseHeaders.set(k, v));")

@@ -43,6 +43,45 @@ async function parseErrorResponse(response: Response): Promise<AIPError> {
   return new AIPError(httpStatusToCode[response.status] ?? 13, body);
 }
 
+// Percent-encodes a path variable's value for interpolation into a URL path.
+// Resource IDs are arbitrary strings, so they can contain characters that are
+// structural in a URL — most importantly "/", which would otherwise split one
+// path segment into several and stop the request from matching its route at all
+// (a bare 404 rather than a service-level error). Rest-of-path placeholders
+// ("{name...}") deliberately span several segments, so their separators stay
+// literal and each segment is encoded on its own.
+export function encodePathVar(value: string, multiSegment: boolean): string {
+  if (!multiSegment) return encodeURIComponent(value);
+  return value.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+}
+
+// Extracts one wildcard's value from a resource name matched by a multi-wildcard
+// pattern such as {name=resources/*/versions/*}, which the server registers as
+// one route segment per wildcard. Cutting at the first occurrence of each
+// separator (rather than splitting on every occurrence) keeps the round trip
+// exact: the server rebuilds the name by joining the values back with the same
+// separators, so the final value has to carry the whole remainder.
+export function splitMultiWildcard(
+  value: string,
+  prefix: string,
+  seps: string[],
+  idx: number,
+): string {
+  let rest = value.startsWith(prefix) ? value.slice(prefix.length) : value;
+  for (let i = 0; i < idx; i++) {
+    const at = rest.indexOf(seps[i]);
+    if (at < 0) return "";
+    rest = rest.slice(at + seps[i].length);
+  }
+  if (idx < seps.length) {
+    const at = rest.indexOf(seps[idx]);
+    // A missing separator means the name is malformed; return what's left
+    // rather than nothing, matching SplitMultiWildcard in the Go runtime.
+    return at < 0 ? rest : rest.slice(0, at);
+  }
+  return rest;
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: recursive JSON walker
 export function sanitizeAny(data: any, registry: Registry): any {
   if (Array.isArray(data)) {
@@ -211,7 +250,7 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
   ): Promise<pb.GetResourceResponse> {
     const msg = create(pb.GetResourceRequestSchema, request as MessageInitShape<typeof pb.GetResourceRequestSchema>);
     let url = `${this.baseUrl}/v1/resources/{name}`;
-    url = url.replace("{name}", (request.name ?? "").replace("resources/", ""));
+    url = url.replace("{name}", encodePathVar((request.name ?? "").replace("resources/", ""), false));
 
     const params = new URLSearchParams();
     const queryString = params.toString();
@@ -240,7 +279,7 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
   ): Promise<pb.UpdateResourceResponse> {
     const msg = create(pb.UpdateResourceRequestSchema, request as MessageInitShape<typeof pb.UpdateResourceRequestSchema>);
     let url = `${this.baseUrl}/v1/resources/{name}`;
-    url = url.replace("{name}", (request.resource?.name ?? "").replace("resources/", ""));
+    url = url.replace("{name}", encodePathVar((request.resource?.name ?? "").replace("resources/", ""), false));
 
     const reqHeaders = new Headers(this.headers);
     if (options.headers) new Headers(options.headers).forEach((v, k) => reqHeaders.set(k, v));
@@ -299,7 +338,7 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
   ): Promise<pb.ListVersionsResponse> {
     const msg = create(pb.ListVersionsRequestSchema, request as MessageInitShape<typeof pb.ListVersionsRequestSchema>);
     let url = `${this.baseUrl}/v1/resources/{name}/versions`;
-    url = url.replace("{name}", (request.name ?? "").replace("resources/", ""));
+    url = url.replace("{name}", encodePathVar((request.name ?? "").replace("resources/", ""), false));
 
     const params = new URLSearchParams();
     if (request.pageToken) params.set("pageToken", request.pageToken);
@@ -321,6 +360,36 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
 
     const data = await response.json();
     return fromJsonAny(pb.ListVersionsResponseSchema, data, this.registry);
+  }
+
+  async getVersion(
+    request: pb.GetVersionRequest | MessageInitShape<typeof pb.GetVersionRequestSchema>,
+    options: CallOptions = {},
+  ): Promise<pb.GetVersionResponse> {
+    const msg = create(pb.GetVersionRequestSchema, request as MessageInitShape<typeof pb.GetVersionRequestSchema>);
+    let url = `${this.baseUrl}/v1/resources/{name_0}/versions/{name_1}`;
+    url = url.replace("{name_0}", encodePathVar(splitMultiWildcard(request.name ?? "", "resources/", ["/versions/"], 0), false));
+    url = url.replace("{name_1}", encodePathVar(splitMultiWildcard(request.name ?? "", "resources/", ["/versions/"], 1), false));
+
+    const params = new URLSearchParams();
+    const queryString = params.toString();
+    const finalUrl = queryString ? `${url}?${queryString}` : url;
+
+    const reqHeaders = new Headers(this.headers);
+    if (options.headers) new Headers(options.headers).forEach((v, k) => reqHeaders.set(k, v));
+    reqHeaders.set("Accept", "application/json");
+    const response = await this.fetch(finalUrl, {
+      method: "GET",
+      headers: reqHeaders,
+      signal: options.signal,
+    });
+
+    if (!response.ok) {
+      throw await parseErrorResponse(response);
+    }
+
+    const data = await response.json();
+    return fromJsonAny(pb.GetVersionResponseSchema, data, this.registry);
   }
 
   async *streamResources(
@@ -348,7 +417,7 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
   ): Promise<Empty> {
     const msg = create(pb.DeleteResourceRequestSchema, request as MessageInitShape<typeof pb.DeleteResourceRequestSchema>);
     let url = `${this.baseUrl}/v1/resources/{name}`;
-    url = url.replace("{name}", (request.name ?? "").replace("resources/", ""));
+    url = url.replace("{name}", encodePathVar((request.name ?? "").replace("resources/", ""), false));
 
     const params = new URLSearchParams();
     const queryString = params.toString();
@@ -394,7 +463,7 @@ export class MixedCoverageServiceAIPClient {
   ): Promise<pb.GetResourceResponse> {
     const msg = create(pb.GetResourceRequestSchema, request as MessageInitShape<typeof pb.GetResourceRequestSchema>);
     let url = `${this.baseUrl}/v1/mixed/resources/{name}`;
-    url = url.replace("{name}", (request.name ?? "").replace("resources/", ""));
+    url = url.replace("{name}", encodePathVar((request.name ?? "").replace("resources/", ""), false));
 
     const params = new URLSearchParams();
     const queryString = params.toString();

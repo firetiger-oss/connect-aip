@@ -2,6 +2,7 @@ import json as _json
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar, cast
+from urllib.parse import quote
 
 import httpx
 from connectrpc.code import Code
@@ -80,6 +81,47 @@ class PathVar:
     prefix: str = ""
 
 
+def split_multi_wildcard(
+    value: str, prefix: str, seps: list[str], idx: int
+) -> str:
+    """Extract one wildcard's value from a multi-wildcard resource name.
+
+    A pattern like ``{name=resources/*/versions/*}`` is registered by the server as
+    one route segment per wildcard, so the single proto field it matched has to be
+    split back apart. Cutting at the first occurrence of each separator (rather than
+    splitting on every occurrence) keeps the round trip exact: the server rebuilds
+    the name by joining the values with the same separators, so the final value has
+    to carry the whole remainder.
+    """
+    rest = value[len(prefix) :] if value.startswith(prefix) else value
+    for sep in seps[:idx]:
+        _, found, rest = rest.partition(sep)
+        if not found:
+            return ""
+    if idx < len(seps):
+        before, found, _ = rest.partition(seps[idx])
+        # A missing separator means the name is malformed; return what's left
+        # rather than nothing, matching connectaip.SplitMultiWildcard in Go.
+        return before if found else rest
+    return rest
+
+
+def _escape_path_var(val: str, placeholder: str) -> str:
+    """Percent-encode a path variable's value for interpolation into a URL path.
+
+    Resource IDs are arbitrary strings, so they can contain characters that are
+    structural in a URL — most importantly "/", which would otherwise split one
+    path segment into several and stop the request from matching its route at all
+    (a bare 404 rather than a service-level error).
+
+    Rest-of-path placeholders ("{name...}") deliberately span several segments, so
+    their separators stay literal and each segment is escaped on its own.
+    """
+    if placeholder.endswith("...}"):
+        return quote(val, safe="/")
+    return quote(val, safe="")
+
+
 @dataclass
 class MethodSpec:
     http_method: str
@@ -122,7 +164,9 @@ class Client(Generic[Req, Resp]):
                     val = path_vars[pv.placeholder]
                     if pv.prefix:
                         val = val.removeprefix(pv.prefix)
-                    url = url.replace(pv.placeholder, val)
+                    url = url.replace(
+                        pv.placeholder, _escape_path_var(val, pv.placeholder)
+                    )
 
         req_headers = {**self._headers}
         if headers:
@@ -204,7 +248,7 @@ class SSEClient(Generic[Req, Resp]):
                 pv = self._path_vars.get(placeholder)
                 if pv and pv.prefix:
                     val = val.removeprefix(pv.prefix)
-                url = url.replace(placeholder, val)
+                url = url.replace(placeholder, _escape_path_var(val, placeholder))
 
         message = json_format.MessageToDict(
             cast(Message, request), preserving_proto_field_name=True

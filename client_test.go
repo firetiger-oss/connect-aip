@@ -750,3 +750,143 @@ func TestCallRequestPropagatesTrailers(t *testing.T) {
 		t.Errorf("expected X-Server-Trailer=trailer-value, got %q (full trailers: %v)", got, resp.Trailer())
 	}
 }
+
+func TestEscapePathVar(t *testing.T) {
+	cases := map[string]struct {
+		val         string
+		placeholder string
+		want        string
+	}{
+		"plain id":                     {"production", "{name}", "production"},
+		"id with slash":                {"staging - apps/docs", "{name}", "staging%20-%20apps%2Fdocs"},
+		"id with query and fragment":   {"a?b#c", "{name}", "a%3Fb%23c"},
+		"id with percent":              {"100%", "{name}", "100%25"},
+		"colon stays legible":          {"env:staging", "{name}", "env:staging"},
+		"rest of path keeps its slash": {"abc/versions/v1", "{name...}", "abc/versions/v1"},
+		"rest of path escapes within":  {"a b/c d", "{name...}", "a%20b/c%20d"},
+		"rest of path single segment":  {"a b", "{name...}", "a%20b"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := escapePathVar(c.val, c.placeholder); got != c.want {
+				t.Errorf("escapePathVar(%q, %q) = %q; want %q", c.val, c.placeholder, got, c.want)
+			}
+		})
+	}
+}
+
+// TestClientPathVarWithSlashRoutes is the regression test for resource IDs that
+// contain "/" — e.g. a deployment environment auto-discovered from a Vercel
+// monorepo build, named "staging - apps/docs". Interpolated raw, the extra
+// segment stops the request matching its ServeMux route and the caller gets a
+// content-free 404 instead of ever reaching the service.
+func TestClientPathVarWithSlashRoutes(t *testing.T) {
+	const id = "staging - apps/docs"
+
+	var gotPathValue string
+	mux := http.NewServeMux()
+	mux.HandleFunc("PATCH /v1/items/{name}", func(w http.ResponseWriter, r *http.Request) {
+		gotPathValue = r.PathValue("name")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"ok"}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := NewClient[testRequest, testResponse](
+		server.Client(),
+		server.URL,
+		MethodSpec{
+			HTTPMethod: "PATCH",
+			URLPattern: "/v1/items/{name}",
+			PathVars:   []PathVar{{Placeholder: "{name}", Prefix: "items/"}},
+		},
+		func(req *testRequest) map[string]string {
+			return map[string]string{"{name}": req.Name}
+		},
+		nil,
+	)
+
+	if _, err := client.Call(t.Context(), &testRequest{Name: "items/" + id}); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if gotPathValue != id {
+		t.Errorf("handler got name=%q, want %q", gotPathValue, id)
+	}
+}
+
+// TestClientRestOfPathVarKeepsSeparators pins the other half of the rule: a
+// rest-of-path placeholder spans several segments, so its own separators must
+// survive while the characters inside each segment are still escaped.
+func TestClientRestOfPathVarKeepsSeparators(t *testing.T) {
+	var gotPathValue string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/items/{name...}", func(w http.ResponseWriter, r *http.Request) {
+		gotPathValue = r.PathValue("name")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"ok"}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := NewClient[testRequest, testResponse](
+		server.Client(),
+		server.URL,
+		MethodSpec{
+			HTTPMethod: "GET",
+			URLPattern: "/v1/items/{name...}",
+			PathVars:   []PathVar{{Placeholder: "{name...}", Prefix: "items/"}},
+		},
+		func(req *testRequest) map[string]string {
+			return map[string]string{"{name...}": req.Name}
+		},
+		nil,
+	)
+
+	if _, err := client.Call(t.Context(), &testRequest{Name: "items/a b/versions/c d"}); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if want := "a b/versions/c d"; gotPathValue != want {
+		t.Errorf("handler got name=%q, want %q", gotPathValue, want)
+	}
+}
+
+// TestSplitMultiWildcard pins the round-trip contract: the server rebuilds a
+// multi-wildcard resource name as prefix + value(0) + sep + value(1), so whatever
+// this returns for idx 1 has to carry the entire remainder — including a "/" or
+// even another copy of sep inside the ID itself.
+func TestSplitMultiWildcard(t *testing.T) {
+	const (
+		prefix = "resources/"
+		sep    = "/versions/"
+	)
+	cases := map[string]struct {
+		val   string
+		want0 string
+		want1 string
+		// malformed names can't round-trip through prefix + v0 + sep + v1.
+		malformed bool
+	}{
+		"plain":                {val: "resources/r1/versions/v1", want0: "r1", want1: "v1"},
+		"slash in last id":     {val: "resources/r1/versions/a/b", want0: "r1", want1: "a/b"},
+		"separator repeated":   {val: "resources/r1/versions/a/versions/b", want0: "r1", want1: "a/versions/b"},
+		"space in both ids":    {val: "resources/r 1/versions/v 1", want0: "r 1", want1: "v 1"},
+		"empty trailing value": {val: "resources/r1/versions/", want0: "r1", want1: ""},
+		"missing separator":    {val: "resources/r1", want0: "r1", want1: "", malformed: true},
+		"prefix not present":   {val: "other/r1/versions/v1", want0: "other/r1", want1: "v1", malformed: true},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			got0 := SplitMultiWildcard(c.val, prefix, sep, 0)
+			got1 := SplitMultiWildcard(c.val, prefix, sep, 1)
+			if got0 != c.want0 || got1 != c.want1 {
+				t.Errorf("SplitMultiWildcard(%q) = (%q, %q); want (%q, %q)", c.val, got0, got1, c.want0, c.want1)
+			}
+			// The reconstruction the generated handler performs.
+			if rebuilt := prefix + got0 + sep + got1; !c.malformed && rebuilt != c.val {
+				t.Errorf("round trip rebuilt %q from %q", rebuilt, c.val)
+			}
+		})
+	}
+}

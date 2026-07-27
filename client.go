@@ -47,23 +47,36 @@ func (t *pathVarSSETransport) Do(req *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("read SSE request body: %w", err)
 	}
 
-	newPath := req.URL.Path
+	// Substitution happens in escaped space, on EscapedPath rather than Path: it
+	// keeps any literal in the base URL's own path correctly encoded, and renders
+	// each placeholder as %7Bname%7D — so a placeholder pathVarFn doesn't yield
+	// stays a valid encoding instead of poisoning the whole RawPath (net/url
+	// ignores a RawPath containing a literal "{", silently falling back to
+	// re-encoding Path and undoing every other value's escaping).
+	rawTemplate := req.URL.EscapedPath()
+	newRawPath := rawTemplate
 	var nested struct {
 		Message json.RawMessage `json:"message"`
 	}
 	if json.Unmarshal(bodyBytes, &nested) == nil && len(nested.Message) > 0 {
 		for placeholder, val := range t.pathVarFn(nested.Message) {
-			newPath = strings.Replace(newPath, placeholder, val, 1)
+			newRawPath = strings.Replace(newRawPath, url.PathEscape(placeholder), escapePathVar(val, placeholder), 1)
 		}
 	}
 
 	req = req.Clone(req.Context())
 	req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 	req.ContentLength = int64(len(bodyBytes))
-	if newPath != req.URL.Path {
+	if newRawPath != rawTemplate {
+		// Path is derived from the escaped form, so the two cannot disagree and
+		// net/http always writes the escaping we intended.
+		decoded, err := url.PathUnescape(newRawPath)
+		if err != nil {
+			return nil, fmt.Errorf("substituting SSE path variables: %w", err)
+		}
 		newURL := *req.URL
-		newURL.Path = newPath
-		newURL.RawPath = "" // recomputed from Path by net/http
+		newURL.Path = decoded
+		newURL.RawPath = newRawPath
 		req.URL = &newURL
 	}
 	return t.next.Do(req)
@@ -176,6 +189,25 @@ type PathVar struct {
 	Prefix      string // e.g., "credentials/" to strip from value
 }
 
+// escapePathVar percent-encodes a path variable's value for interpolation into a
+// URL path. Resource IDs are arbitrary strings, so they can contain characters
+// that are structural in a URL — most importantly "/", which would otherwise
+// split one path segment into several and stop the request from matching its
+// route at all (a bare 404 rather than a service-level error).
+//
+// Rest-of-path placeholders ("{name...}") deliberately span several segments, so
+// their separators stay literal and each segment is escaped on its own.
+func escapePathVar(val, placeholder string) string {
+	if !strings.HasSuffix(placeholder, "...}") {
+		return url.PathEscape(val)
+	}
+	segments := strings.Split(val, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return strings.Join(segments, "/")
+}
+
 // Client is a generic REST client for a single method.
 // It uses connect.HTTPClient for compatibility with ConnectRPC clients.
 type Client[Req, Resp any] struct {
@@ -240,7 +272,7 @@ func (c *Client[Req, Resp]) CallRequest(ctx context.Context, connectReq *connect
 				if pv.Prefix != "" {
 					val = strings.TrimPrefix(val, pv.Prefix)
 				}
-				urlPath = strings.Replace(urlPath, pv.Placeholder, val, 1)
+				urlPath = strings.Replace(urlPath, pv.Placeholder, escapePathVar(val, pv.Placeholder), 1)
 			}
 		}
 	}
@@ -481,18 +513,29 @@ func connectCodeFromString(s string) (connect.Code, bool) {
 	return code, ok
 }
 
-// SplitMultiWildcard extracts one segment from a multi-wildcard resource name.
-// It trims prefix from val, splits on sep, and returns the element at idx.
-// If the split produces fewer parts than idx+1 (malformed name), it returns "".
+// SplitMultiWildcard extracts one wildcard's value from a resource name matched by
+// a two-wildcard pattern such as {name=agents/*/slos/*}. It trims prefix from val
+// and cuts at the first occurrence of sep, returning what precedes it for idx 0 and
+// everything after it for idx 1. If sep never appears the name is malformed, so only
+// idx 0 is meaningful and later indices are empty.
 //
-// This is used in generated PathVars helpers for patterns like {name=agents/*/slos/*}.
+// Cutting at the first occurrence rather than splitting on every occurrence is what
+// keeps the round trip exact: the server rebuilds the name as
+// prefix + value(0) + sep + value(1), so value(1) has to carry the whole remainder
+// even when that remainder contains sep itself.
+//
+// This is used in generated PathVars helpers.
 func SplitMultiWildcard(val, prefix, sep string, idx int) string {
-	i := 0
-	for part := range strings.SplitSeq(strings.TrimPrefix(val, prefix), sep) {
-		if i == idx {
-			return part
+	rest := strings.TrimPrefix(val, prefix)
+	before, after, found := strings.Cut(rest, sep)
+	if !found {
+		if idx == 0 {
+			return rest
 		}
-		i++
+		return ""
 	}
-	return ""
+	if idx == 0 {
+		return before
+	}
+	return after
 }

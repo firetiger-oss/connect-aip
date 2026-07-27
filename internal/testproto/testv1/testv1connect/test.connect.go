@@ -50,6 +50,8 @@ const (
 	// TestServiceListVersionsProcedure is the fully-qualified name of the TestService's ListVersions
 	// RPC.
 	TestServiceListVersionsProcedure = "/connectaip.test.v1.TestService/ListVersions"
+	// TestServiceGetVersionProcedure is the fully-qualified name of the TestService's GetVersion RPC.
+	TestServiceGetVersionProcedure = "/connectaip.test.v1.TestService/GetVersion"
 	// TestServiceStreamResourcesProcedure is the fully-qualified name of the TestService's
 	// StreamResources RPC.
 	TestServiceStreamResourcesProcedure = "/connectaip.test.v1.TestService/StreamResources"
@@ -71,6 +73,11 @@ type TestServiceClient interface {
 	UpdateResource(context.Context, *connect.Request[testv1.UpdateResourceRequest]) (*connect.Response[testv1.UpdateResourceResponse], error)
 	ListResources(context.Context, *connect.Request[testv1.ListResourcesRequest]) (*connect.Response[testv1.ListResourcesResponse], error)
 	ListVersions(context.Context, *connect.Request[testv1.ListVersionsRequest]) (*connect.Response[testv1.ListVersionsResponse], error)
+	// Multi-wildcard pattern. The Go plugin expands it into two single-segment
+	// ServeMux wildcards while the TS plugin emits one rest-of-path placeholder,
+	// so this is the case where path-var encoding has to keep the "/" separators
+	// literal instead of escaping them.
+	GetVersion(context.Context, *connect.Request[testv1.GetVersionRequest]) (*connect.Response[testv1.GetVersionResponse], error)
 	// Server-streaming method used to validate the SSE handler path.
 	StreamResources(context.Context, *connect.Request[testv1.CreateResourceRequest]) (*connect.ServerStreamForClient[testv1.CreateResourceResponse], error)
 	// Returns google.protobuf.Empty to exercise cross-package response types.
@@ -118,6 +125,12 @@ func NewTestServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(testServiceMethods.ByName("ListVersions")),
 			connect.WithClientOptions(opts...),
 		),
+		getVersion: connect.NewClient[testv1.GetVersionRequest, testv1.GetVersionResponse](
+			httpClient,
+			baseURL+TestServiceGetVersionProcedure,
+			connect.WithSchema(testServiceMethods.ByName("GetVersion")),
+			connect.WithClientOptions(opts...),
+		),
 		streamResources: connect.NewClient[testv1.CreateResourceRequest, testv1.CreateResourceResponse](
 			httpClient,
 			baseURL+TestServiceStreamResourcesProcedure,
@@ -140,6 +153,7 @@ type testServiceClient struct {
 	updateResource  *connect.Client[testv1.UpdateResourceRequest, testv1.UpdateResourceResponse]
 	listResources   *connect.Client[testv1.ListResourcesRequest, testv1.ListResourcesResponse]
 	listVersions    *connect.Client[testv1.ListVersionsRequest, testv1.ListVersionsResponse]
+	getVersion      *connect.Client[testv1.GetVersionRequest, testv1.GetVersionResponse]
 	streamResources *connect.Client[testv1.CreateResourceRequest, testv1.CreateResourceResponse]
 	deleteResource  *connect.Client[testv1.DeleteResourceRequest, emptypb.Empty]
 }
@@ -169,6 +183,11 @@ func (c *testServiceClient) ListVersions(ctx context.Context, req *connect.Reque
 	return c.listVersions.CallUnary(ctx, req)
 }
 
+// GetVersion calls connectaip.test.v1.TestService.GetVersion.
+func (c *testServiceClient) GetVersion(ctx context.Context, req *connect.Request[testv1.GetVersionRequest]) (*connect.Response[testv1.GetVersionResponse], error) {
+	return c.getVersion.CallUnary(ctx, req)
+}
+
 // StreamResources calls connectaip.test.v1.TestService.StreamResources.
 func (c *testServiceClient) StreamResources(ctx context.Context, req *connect.Request[testv1.CreateResourceRequest]) (*connect.ServerStreamForClient[testv1.CreateResourceResponse], error) {
 	return c.streamResources.CallServerStream(ctx, req)
@@ -186,6 +205,11 @@ type TestServiceHandler interface {
 	UpdateResource(context.Context, *connect.Request[testv1.UpdateResourceRequest]) (*connect.Response[testv1.UpdateResourceResponse], error)
 	ListResources(context.Context, *connect.Request[testv1.ListResourcesRequest]) (*connect.Response[testv1.ListResourcesResponse], error)
 	ListVersions(context.Context, *connect.Request[testv1.ListVersionsRequest]) (*connect.Response[testv1.ListVersionsResponse], error)
+	// Multi-wildcard pattern. The Go plugin expands it into two single-segment
+	// ServeMux wildcards while the TS plugin emits one rest-of-path placeholder,
+	// so this is the case where path-var encoding has to keep the "/" separators
+	// literal instead of escaping them.
+	GetVersion(context.Context, *connect.Request[testv1.GetVersionRequest]) (*connect.Response[testv1.GetVersionResponse], error)
 	// Server-streaming method used to validate the SSE handler path.
 	StreamResources(context.Context, *connect.Request[testv1.CreateResourceRequest], *connect.ServerStream[testv1.CreateResourceResponse]) error
 	// Returns google.protobuf.Empty to exercise cross-package response types.
@@ -229,6 +253,12 @@ func NewTestServiceHandler(svc TestServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(testServiceMethods.ByName("ListVersions")),
 		connect.WithHandlerOptions(opts...),
 	)
+	testServiceGetVersionHandler := connect.NewUnaryHandler(
+		TestServiceGetVersionProcedure,
+		svc.GetVersion,
+		connect.WithSchema(testServiceMethods.ByName("GetVersion")),
+		connect.WithHandlerOptions(opts...),
+	)
 	testServiceStreamResourcesHandler := connect.NewServerStreamHandler(
 		TestServiceStreamResourcesProcedure,
 		svc.StreamResources,
@@ -253,6 +283,8 @@ func NewTestServiceHandler(svc TestServiceHandler, opts ...connect.HandlerOption
 			testServiceListResourcesHandler.ServeHTTP(w, r)
 		case TestServiceListVersionsProcedure:
 			testServiceListVersionsHandler.ServeHTTP(w, r)
+		case TestServiceGetVersionProcedure:
+			testServiceGetVersionHandler.ServeHTTP(w, r)
 		case TestServiceStreamResourcesProcedure:
 			testServiceStreamResourcesHandler.ServeHTTP(w, r)
 		case TestServiceDeleteResourceProcedure:
@@ -284,6 +316,10 @@ func (UnimplementedTestServiceHandler) ListResources(context.Context, *connect.R
 
 func (UnimplementedTestServiceHandler) ListVersions(context.Context, *connect.Request[testv1.ListVersionsRequest]) (*connect.Response[testv1.ListVersionsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("connectaip.test.v1.TestService.ListVersions is not implemented"))
+}
+
+func (UnimplementedTestServiceHandler) GetVersion(context.Context, *connect.Request[testv1.GetVersionRequest]) (*connect.Response[testv1.GetVersionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("connectaip.test.v1.TestService.GetVersion is not implemented"))
 }
 
 func (UnimplementedTestServiceHandler) StreamResources(context.Context, *connect.Request[testv1.CreateResourceRequest], *connect.ServerStream[testv1.CreateResourceResponse]) error {

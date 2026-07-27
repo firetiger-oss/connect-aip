@@ -2,8 +2,10 @@ package connectaip
 
 import (
 	"context"
+	"iter"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -144,4 +146,129 @@ func TestSSEClientRequiresPostRoute(t *testing.T) {
 		t.Fatal("expected error due to GET/POST method mismatch, got nil")
 	}
 	t.Logf("method mismatch error (as expected): %v", streamErr)
+}
+
+// stubHTTPClient records the request it is handed and returns an empty 200, so a
+// test can assert on the URL the transport chain produced.
+type stubHTTPClient struct {
+	got *http.Request
+}
+
+func (s *stubHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	s.got = req
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{},
+		Body:       http.NoBody,
+		Request:    req,
+	}, nil
+}
+
+// TestSSEPathVarEscaping covers the streaming half of path-var encoding. The SSE
+// transport substitutes into an already-parsed URL, so it has to keep Path (decoded)
+// and RawPath (encoded) consistent — otherwise net/http re-encodes from Path and the
+// "/" inside a resource ID silently becomes a segment separator again.
+func TestSSEPathVarEscaping(t *testing.T) {
+	cases := map[string]struct {
+		placeholder string
+		val         string
+		wantEscaped string
+		wantDecoded string
+	}{
+		"single segment escapes slash": {
+			placeholder: "{name}",
+			val:         "staging - apps/docs",
+			wantEscaped: "/v1/items/staging%20-%20apps%2Fdocs",
+			wantDecoded: "/v1/items/staging - apps/docs",
+		},
+		"rest of path keeps separators": {
+			placeholder: "{name...}",
+			val:         "a b/versions/c d",
+			wantEscaped: "/v1/items/a%20b/versions/c%20d",
+			wantDecoded: "/v1/items/a b/versions/c d",
+		},
+		"plain id leaves path untouched": {
+			placeholder: "{name}",
+			val:         "production",
+			wantEscaped: "/v1/items/production",
+			wantDecoded: "/v1/items/production",
+		},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			assertSSEPath(t, "http://example.test/v1/items/"+c.placeholder,
+				map[string]string{c.placeholder: c.val}, c.wantEscaped, c.wantDecoded)
+		})
+	}
+}
+
+// assertSSEPath runs one request through pathVarSSETransport and checks the path
+// the next transport in the chain is handed, in both escaped and decoded form.
+func assertSSEPath(t *testing.T, rawURL string, vars map[string]string, wantEscaped, wantDecoded string) {
+	t.Helper()
+
+	next := &stubHTTPClient{}
+	transport := &pathVarSSETransport{
+		pathVarFn: func([]byte) iter.Seq2[string, string] {
+			return func(yield func(string, string) bool) {
+				for placeholder, val := range vars {
+					if !yield(placeholder, val) {
+						return
+					}
+				}
+			}
+		},
+		next: next,
+	}
+
+	req := httptest.NewRequest(http.MethodPost, rawURL, strings.NewReader(`{"message":{}}`))
+	if _, err := transport.Do(req); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+
+	if got := next.got.URL.EscapedPath(); got != wantEscaped {
+		t.Errorf("EscapedPath() = %q; want %q", got, wantEscaped)
+	}
+	if got := next.got.URL.Path; got != wantDecoded {
+		t.Errorf("Path = %q; want %q", got, wantDecoded)
+	}
+}
+
+// TestSSEPathVarPartialSubstitution covers a pathVarFn that yields only some of a
+// route's placeholders — generateSSEPathVarExtractor skips empty fields, so this
+// is reachable from generated code. The substituted value must keep its escaping:
+// a leftover literal "{" in RawPath makes net/url discard the whole thing and
+// re-encode from Path, turning an escaped "/" back into a separator.
+func TestSSEPathVarPartialSubstitution(t *testing.T) {
+	assertSSEPath(t,
+		"http://example.test/v1/items/{parent}/sub/{name}",
+		map[string]string{"{parent}": "a/b"},
+		"/v1/items/a%2Fb/sub/%7Bname%7D",
+		"/v1/items/a/b/sub/{name}",
+	)
+}
+
+// TestSSEPathVarEscapedBasePath covers a base URL whose own path needs escaping.
+// connectsse.Client hands over a URL with Path decoded and RawPath empty, so
+// rebuilding from Path alone would leave that literal in the raw form and
+// invalidate the escaping of every value.
+func TestSSEPathVarEscapedBasePath(t *testing.T) {
+	assertSSEPath(t,
+		"http://example.test/base%20dir/v1/items/{name}",
+		map[string]string{"{name}": "a/b"},
+		"/base%20dir/v1/items/a%2Fb",
+		"/base dir/v1/items/a/b",
+	)
+}
+
+// TestSSEPathVarNoSubstitution leaves the URL untouched when pathVarFn yields
+// nothing, rather than rewriting Path/RawPath to an equivalent-but-different form.
+func TestSSEPathVarNoSubstitution(t *testing.T) {
+	assertSSEPath(t,
+		"http://example.test/v1/items/{name}",
+		map[string]string{},
+		"/v1/items/%7Bname%7D",
+		"/v1/items/{name}",
+	)
 }

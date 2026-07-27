@@ -10,7 +10,8 @@ option go_package = "github.com/firetiger-oss/connect-aip/internal/testproto/tes
 // TestService exercises every shape the runtime + codegen care about:
 // Create (POST + body=*), Get (GET + path var), Update (PATCH + nested body),
 // List (GET + query params), ListVersions (GET + path var with custom verb suffix),
-// and a server-streaming method (POST → SSE).
+// GetVersion (GET + multi-wildcard path var), and a server-streaming method
+// (POST → SSE).
 service TestService {
   rpc CreateResource(CreateResourceRequest) returns (CreateResourceResponse) {
     option (google.api.http) = {
@@ -41,6 +42,16 @@ service TestService {
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse) {
     option (google.api.http) = {
       get: "/v1/{name=resources/*}/versions"
+    };
+  }
+
+  // Multi-wildcard pattern. The Go plugin expands it into two single-segment
+  // ServeMux wildcards while the TS plugin emits one rest-of-path placeholder,
+  // so this is the case where path-var encoding has to keep the "/" separators
+  // literal instead of escaping them.
+  rpc GetVersion(GetVersionRequest) returns (GetVersionResponse) {
+    option (google.api.http) = {
+      get: "/v1/{name=resources/*/versions/*}"
     };
   }
 
@@ -124,6 +135,14 @@ message ListVersionsRequest {
 }
 
 message ListVersionsResponse {
+}
+
+message GetVersionRequest {
+  string name = 1;
+}
+
+message GetVersionResponse {
+  string name = 1;
 }
 
 message DeleteResourceRequest {

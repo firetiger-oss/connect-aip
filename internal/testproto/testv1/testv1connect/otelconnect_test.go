@@ -43,6 +43,10 @@ func (otelTestService) ListVersions(context.Context, *connect.Request[testv1.Lis
 	return connect.NewResponse(&testv1.ListVersionsResponse{}), nil
 }
 
+func (otelTestService) GetVersion(_ context.Context, req *connect.Request[testv1.GetVersionRequest]) (*connect.Response[testv1.GetVersionResponse], error) {
+	return connect.NewResponse(&testv1.GetVersionResponse{Name: req.Msg.GetName()}), nil
+}
+
 func (otelTestService) StreamResources(_ context.Context, req *connect.Request[testv1.CreateResourceRequest], stream *connect.ServerStream[testv1.CreateResourceResponse]) error {
 	return stream.Send(&testv1.CreateResourceResponse{
 		Resource: &testv1.Resource{Name: "resources/" + req.Msg.GetResourceId()},
