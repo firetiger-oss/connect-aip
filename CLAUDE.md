@@ -30,6 +30,8 @@ Any new HTTP-rule feature (e.g. supporting bytes-typed path params, a new query 
 
 The TS plugin inlines its own runtime, so TS feature work means editing `cmd/protoc-gen-aip-ts/main.go` runtime emission, not a separate package.
 
+**Emitted TypeScript has to compile under the strictest consumer, and nothing here checks that.** This repo has no TS toolchain, so `go test ./...` will happily pass on emitted code that `tsc` rejects — the breakage lands in a downstream repo instead. Firetiger `core` compiles `proto/ts` with `noUncheckedIndexedAccess`, where `seps[i]` is `string | undefined`, so read every index expression into a local and narrow it before use rather than indexing inline. Assume `strict` plus `noUncheckedIndexedAccess` when emitting anything that indexes an array or object. Sanity-check a non-trivial helper against a real consumer's typecheck before releasing.
+
 Each plugin needs a corresponding regression test against the fixture proto.
 
 **Why this matters**: the three languages are public API surface in lockstep; drifting one is a silent regression nobody catches until a downstream consumer files a bug.
