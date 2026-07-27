@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"google.golang.org/genproto/googleapis/api/annotations"
@@ -35,6 +36,7 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 	}
 	var allServices []serviceRoutes
 	hasPathVars := false
+	hasMultiWildcard := false
 	hasStreaming := false
 
 	for _, service := range file.Services {
@@ -66,6 +68,11 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 			for _, r := range routes {
 				if len(r.pathVars) > 0 {
 					hasPathVars = true
+				}
+				for _, pv := range r.pathVars {
+					if pv.multi != nil {
+						hasMultiWildcard = true
+					}
 				}
 			}
 		}
@@ -119,6 +126,9 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) {
 	if hasStreaming {
 		imports = append(imports, "SSEClient")
 	}
+	if hasMultiWildcard {
+		imports = append(imports, "split_multi_wildcard")
+	}
 	g.P("from connectaip import ", strings.Join(imports, ", "))
 	g.P()
 
@@ -145,6 +155,23 @@ type pathVar struct {
 	fieldPath string
 	prefix    string
 	wildcard  bool
+	// multi is set when this variable is one wildcard of a proto field that spans
+	// several path segments; its value has to be split out of that field.
+	multi *multiVar
+}
+
+// multiVar describes one wildcard of a field matched by a multi-wildcard pattern,
+// e.g. {name=resources/*/versions/*} → resources/{name_0}/versions/{name_1}.
+//
+// The expansion mirrors protoc-gen-aip-go, because that plugin's ServeMux path is
+// what the server actually registers: one route segment per wildcard. Emitting a
+// single rest-of-path placeholder here instead would send the field's own "/"
+// separators as real separators, so any ID containing "/" would miss the route.
+type multiVar struct {
+	fieldPath string
+	prefix    string   // literal before the first wildcard, e.g. "resources/"
+	seps      []string // seps[i] is the literal between wildcard i and i+1
+	idx       int
 }
 
 // pyTypeResolver tracks message types referenced by the file under generation
@@ -386,11 +413,58 @@ func parsePathPattern(pattern string) ([]pathVar, string, bool) {
 				result.WriteString(prefix)
 			}
 
-			useWildcard := isRestOfPath
+			// A rest-of-path wildcard can only be the last thing in a ServeMux
+			// pattern, so a wildcard with a literal after it stays single-segment.
+			afterBrace := pattern[i+end+1:]
+			isAtEnd := afterBrace == "" || afterBrace == "/"
+			useWildcard := isRestOfPath && isAtEnd
 
 			sanitizedName := fieldPath
 			if lastDot := strings.LastIndex(fieldPath, "."); lastDot >= 0 {
 				sanitizedName = fieldPath[lastDot+1:]
+			}
+
+			// Multi-wildcard expansion, matching protoc-gen-aip-go: one route
+			// segment per wildcard, e.g. {name=resources/*/versions/*} becomes
+			// resources/{name_0}/versions/{name_1}. The value of each sub-var is
+			// split back out of the single proto field at emission time.
+			if starCount := strings.Count(varPattern, "*"); starCount > 1 {
+				parts := strings.Split(varPattern, "*") // e.g. ["resources/", "/versions/", ""]
+				numWildcards := len(parts) - 1
+
+				seps := make([]string, numWildcards-1)
+				for si := range seps {
+					seps[si] = parts[si+1]
+				}
+
+				for wi := range numWildcards {
+					result.WriteString("{")
+					result.WriteString(fmt.Sprintf("%s_%d", sanitizedName, wi))
+					result.WriteString("}")
+					if wi < numWildcards-1 {
+						result.WriteString(parts[wi+1])
+					}
+				}
+				if trailing := parts[numWildcards]; trailing != "" {
+					result.WriteString(trailing)
+				}
+
+				for wi := range numWildcards {
+					pathVars = append(pathVars, pathVar{
+						name:      fmt.Sprintf("%s_%d", sanitizedName, wi),
+						fieldPath: fieldPath,
+						wildcard:  true,
+						multi: &multiVar{
+							fieldPath: fieldPath,
+							prefix:    parts[0],
+							seps:      seps,
+							idx:       wi,
+						},
+					})
+				}
+
+				i += end + 1
+				continue
 			}
 
 			result.WriteString("{")
@@ -503,6 +577,17 @@ func generatePathVarFn(g *protogen.GeneratedFile, route routeInfo, resolver *pyT
 			placeholder += "..."
 		}
 		placeholder += "}"
+		if pv.multi != nil {
+			// One wildcard of a multi-wildcard field: split its value back out of
+			// the single proto field the pattern matched.
+			seps := make([]string, 0, len(pv.multi.seps))
+			for _, sep := range pv.multi.seps {
+				seps = append(seps, strconv.Quote(sep))
+			}
+			g.P("        \"", placeholder, "\": split_multi_wildcard(", fieldAccessor, ", ",
+				strconv.Quote(pv.multi.prefix), ", [", strings.Join(seps, ", "), "], ", pv.multi.idx, "),")
+			continue
+		}
 		g.P("        \"", placeholder, "\": ", fieldAccessor, ",")
 	}
 	g.P("    }")

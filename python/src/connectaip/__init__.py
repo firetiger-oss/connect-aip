@@ -81,6 +81,31 @@ class PathVar:
     prefix: str = ""
 
 
+def split_multi_wildcard(
+    value: str, prefix: str, seps: list[str], idx: int
+) -> str:
+    """Extract one wildcard's value from a multi-wildcard resource name.
+
+    A pattern like ``{name=resources/*/versions/*}`` is registered by the server as
+    one route segment per wildcard, so the single proto field it matched has to be
+    split back apart. Cutting at the first occurrence of each separator (rather than
+    splitting on every occurrence) keeps the round trip exact: the server rebuilds
+    the name by joining the values with the same separators, so the final value has
+    to carry the whole remainder.
+    """
+    rest = value[len(prefix) :] if value.startswith(prefix) else value
+    for sep in seps[:idx]:
+        _, found, rest = rest.partition(sep)
+        if not found:
+            return ""
+    if idx < len(seps):
+        before, found, _ = rest.partition(seps[idx])
+        # A missing separator means the name is malformed; return what's left
+        # rather than nothing, matching connectaip.SplitMultiWildcard in Go.
+        return before if found else rest
+    return rest
+
+
 def _escape_path_var(val: str, placeholder: str) -> str:
     """Percent-encode a path variable's value for interpolation into a URL path.
 

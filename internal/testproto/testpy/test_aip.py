@@ -6,7 +6,7 @@ import httpx
 
 import test_pb2 as pb2
 from google.protobuf import empty_pb2
-from connectaip import Client, MethodSpec, PathVar, SSEClient
+from connectaip import Client, MethodSpec, PathVar, SSEClient, split_multi_wildcard
 
 
 def _get_resource_path_vars(req: pb2.GetResourceRequest) -> dict[str, str]:
@@ -44,7 +44,8 @@ def _list_versions_query(req: pb2.ListVersionsRequest) -> dict[str, str]:
 
 def _get_version_path_vars(req: pb2.GetVersionRequest) -> dict[str, str]:
     return {
-        "{name...}": req.name,
+        "{name_0}": split_multi_wildcard(req.name, "resources/", ["/versions/"], 0),
+        "{name_1}": split_multi_wildcard(req.name, "resources/", ["/versions/"], 1),
     }
 
 def _delete_resource_path_vars(req: pb2.DeleteResourceRequest) -> dict[str, str]:
@@ -109,7 +110,7 @@ class TestServiceAIPClient:
         self._get_version = Client[pb2.GetVersionRequest, pb2.GetVersionResponse](
             session=session,
             base_url=base_url,
-            spec=MethodSpec("GET", "/v1/resources/{name...}", [PathVar("{name...}", "resources/")]),
+            spec=MethodSpec("GET", "/v1/resources/{name_0}/versions/{name_1}", [PathVar("{name_0}"), PathVar("{name_1}")]),
             response_type=pb2.GetVersionResponse,
             path_var_fn=_get_version_path_vars,
             query_fn=None,

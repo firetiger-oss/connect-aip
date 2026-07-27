@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -196,5 +197,67 @@ func TestUnaryHandlerWithExternalReturnType(t *testing.T) {
 		if strings.Contains(content, banned) {
 			t.Errorf("fixture contains %q — cross-package return type (google.protobuf.Empty) is being emitted via the local proto package alias", banned)
 		}
+	}
+}
+
+// TestParseURLPatternWildcardShapes is the Go half of the shared expectation in
+// protoc-gen-aip-{ts,py}'s TestParsePathPatternWildcardShapes. This plugin's
+// ServeMux path is the one the server registers, so these three tables must agree
+// — if they drift, clients build paths no route matches and callers see a bare 404.
+func TestParseURLPatternWildcardShapes(t *testing.T) {
+	cases := map[string]struct {
+		pattern  string
+		wantPath string
+		wantVars []string
+	}{
+		"single trailing wildcard": {
+			pattern:  "/v1/{name=resources/*}",
+			wantPath: "/v1/resources/{name}",
+			wantVars: []string{"name:resources/"},
+		},
+		"wildcard with literal suffix outside braces": {
+			pattern:  "/v1/{name=resources/*}/versions",
+			wantPath: "/v1/resources/{name}/versions",
+			wantVars: []string{"name:resources/"},
+		},
+		"multi wildcard expands to one segment each": {
+			pattern:  "/v1/{name=resources/*/versions/*}",
+			wantPath: "/v1/resources/{name_0}/versions/{name_1}",
+			wantVars: []string{"name_0!multi(resources/|/versions/|0)", "name_1!multi(resources/|/versions/|1)"},
+		},
+		"rest of path when a literal trails inside braces": {
+			pattern:  "/v1/{name=resources/*/versions}",
+			wantPath: "/v1/resources/{name...}",
+			wantVars: []string{"name:resources/"},
+		},
+		"nested field path uses the last segment": {
+			pattern:  "/v1/{resource.name=resources/*}",
+			wantPath: "/v1/resources/{name}",
+			wantVars: []string{"name:resources/"},
+		},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			vars, path, _, ok := parseURLPatternToServeMux(c.pattern)
+			if !ok {
+				t.Fatalf("parseURLPatternToServeMux(%q) not ok", c.pattern)
+			}
+			if path != c.wantPath {
+				t.Errorf("path = %q; want %q", path, c.wantPath)
+			}
+			var got []string
+			for _, pv := range vars {
+				if pv.multiGroup != nil {
+					got = append(got, fmt.Sprintf("%s!multi(%s|%s|%d)",
+						pv.name, pv.multiGroup.prefix, strings.Join(pv.multiGroup.seps, ","), pv.multiGroup.idx))
+					continue
+				}
+				got = append(got, pv.name+":"+pv.prefix)
+			}
+			if strings.Join(got, " ") != strings.Join(c.wantVars, " ") {
+				t.Errorf("vars = %v; want %v", got, c.wantVars)
+			}
+		})
 	}
 }

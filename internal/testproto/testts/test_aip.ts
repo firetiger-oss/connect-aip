@@ -55,6 +55,33 @@ export function encodePathVar(value: string, multiSegment: boolean): string {
   return value.split("/").map((segment) => encodeURIComponent(segment)).join("/");
 }
 
+// Extracts one wildcard's value from a resource name matched by a multi-wildcard
+// pattern such as {name=resources/*/versions/*}, which the server registers as
+// one route segment per wildcard. Cutting at the first occurrence of each
+// separator (rather than splitting on every occurrence) keeps the round trip
+// exact: the server rebuilds the name by joining the values back with the same
+// separators, so the final value has to carry the whole remainder.
+export function splitMultiWildcard(
+  value: string,
+  prefix: string,
+  seps: string[],
+  idx: number,
+): string {
+  let rest = value.startsWith(prefix) ? value.slice(prefix.length) : value;
+  for (let i = 0; i < idx; i++) {
+    const at = rest.indexOf(seps[i]);
+    if (at < 0) return "";
+    rest = rest.slice(at + seps[i].length);
+  }
+  if (idx < seps.length) {
+    const at = rest.indexOf(seps[idx]);
+    // A missing separator means the name is malformed; return what's left
+    // rather than nothing, matching SplitMultiWildcard in the Go runtime.
+    return at < 0 ? rest : rest.slice(0, at);
+  }
+  return rest;
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: recursive JSON walker
 export function sanitizeAny(data: any, registry: Registry): any {
   if (Array.isArray(data)) {
@@ -340,8 +367,9 @@ export class TestServiceAIPClient implements Client<typeof pb.TestService> {
     options: CallOptions = {},
   ): Promise<pb.GetVersionResponse> {
     const msg = create(pb.GetVersionRequestSchema, request as MessageInitShape<typeof pb.GetVersionRequestSchema>);
-    let url = `${this.baseUrl}/v1/resources/{name...}`;
-    url = url.replace("{name...}", encodePathVar((request.name ?? "").replace("resources/", ""), true));
+    let url = `${this.baseUrl}/v1/resources/{name_0}/versions/{name_1}`;
+    url = url.replace("{name_0}", encodePathVar(splitMultiWildcard(request.name ?? "", "resources/", ["/versions/"], 0), false));
+    url = url.replace("{name_1}", encodePathVar(splitMultiWildcard(request.name ?? "", "resources/", ["/versions/"], 1), false));
 
     const params = new URLSearchParams();
     const queryString = params.toString();

@@ -850,3 +850,43 @@ func TestClientRestOfPathVarKeepsSeparators(t *testing.T) {
 		t.Errorf("handler got name=%q, want %q", gotPathValue, want)
 	}
 }
+
+// TestSplitMultiWildcard pins the round-trip contract: the server rebuilds a
+// multi-wildcard resource name as prefix + value(0) + sep + value(1), so whatever
+// this returns for idx 1 has to carry the entire remainder — including a "/" or
+// even another copy of sep inside the ID itself.
+func TestSplitMultiWildcard(t *testing.T) {
+	const (
+		prefix = "resources/"
+		sep    = "/versions/"
+	)
+	cases := map[string]struct {
+		val   string
+		want0 string
+		want1 string
+		// malformed names can't round-trip through prefix + v0 + sep + v1.
+		malformed bool
+	}{
+		"plain":                {val: "resources/r1/versions/v1", want0: "r1", want1: "v1"},
+		"slash in last id":     {val: "resources/r1/versions/a/b", want0: "r1", want1: "a/b"},
+		"separator repeated":   {val: "resources/r1/versions/a/versions/b", want0: "r1", want1: "a/versions/b"},
+		"space in both ids":    {val: "resources/r 1/versions/v 1", want0: "r 1", want1: "v 1"},
+		"empty trailing value": {val: "resources/r1/versions/", want0: "r1", want1: ""},
+		"missing separator":    {val: "resources/r1", want0: "r1", want1: "", malformed: true},
+		"prefix not present":   {val: "other/r1/versions/v1", want0: "other/r1", want1: "v1", malformed: true},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			got0 := SplitMultiWildcard(c.val, prefix, sep, 0)
+			got1 := SplitMultiWildcard(c.val, prefix, sep, 1)
+			if got0 != c.want0 || got1 != c.want1 {
+				t.Errorf("SplitMultiWildcard(%q) = (%q, %q); want (%q, %q)", c.val, got0, got1, c.want0, c.want1)
+			}
+			// The reconstruction the generated handler performs.
+			if rebuilt := prefix + got0 + sep + got1; !c.malformed && rebuilt != c.val {
+				t.Errorf("round trip rebuilt %q from %q", rebuilt, c.val)
+			}
+		})
+	}
+}

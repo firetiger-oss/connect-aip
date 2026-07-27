@@ -43,7 +43,21 @@ The rule differs by placeholder shape, and all three clients implement it (`esca
 - `{name}` — one segment, so escape the whole value including `/`.
 - `{name...}` — a rest-of-path wildcard that deliberately spans segments, so escape each segment and keep the separators literal.
 
-The Go client also has to keep `URL.Path` (decoded) and `URL.RawPath` (encoded) in step; the SSE transport substitutes into an already-parsed URL, so it builds both. Fixture coverage lives on `GetVersion` (`{name=resources/*/versions/*}`), the only multi-wildcard route.
+The Go client also has to keep `URL.Path` (decoded) and `URL.RawPath` (encoded) in step. The SSE transport substitutes into an already-parsed URL, so it works in escaped space — on `EscapedPath()`, matching placeholders in their `%7Bname%7D` form and deriving `Path` back from the result. Substituting into the decoded `Path` instead silently loses the escaping, because `net/url` ignores a `RawPath` that isn't a valid encoding of `Path` (a leftover literal `{` from an unsubstituted placeholder is enough to trigger it).
+
+## Multi-wildcard patterns: the route shape is Go's
+
+`protoc-gen-aip-go`'s ServeMux path is what the server actually registers, so the TS and Python plugins have to build the same shape. For a multi-wildcard pattern they all expand one route segment per wildcard:
+
+```
+{name=resources/*/versions/*}  →  /v1/resources/{name_0}/versions/{name_1}
+```
+
+Each wildcard's value is then split back out of the single proto field the pattern matched — `SplitMultiWildcard` in Go, `split_multi_wildcard` in Python, the emitted `splitMultiWildcard` in TS — and escaped as the one segment it occupies. All three cut at the *first* occurrence of each separator, so the last value carries the whole remainder and the name the server rebuilds is byte-identical to what the caller passed.
+
+Emitting a single rest-of-path `{name...}` for these patterns instead (which TS and Python used to do) sends the field's own `/` separators as real separators, so any ID containing `/` misses the route and 404s while the Go client succeeds.
+
+`TestParsePathPatternWildcardShapes` (TS, Py) and `TestParseURLPatternWildcardShapes` (Go) hold the same table of pattern → route shape; keep all three in step. `TestTSRouteMatchesGoRoute` compares the checked-in fixtures directly. Known gap: `generatePathVarExtractor` in the Go plugin only splits the 2-wildcard case and emits a `TODO` for three or more (no such pattern exists in practice); TS and Python handle N.
 
 ## Test fixture regeneration
 

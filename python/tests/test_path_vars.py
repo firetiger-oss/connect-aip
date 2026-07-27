@@ -11,7 +11,13 @@ so it gets its own behavioral tests here rather than leaning on the Go suite.
 
 import httpx
 import pytest
-from connectaip import Client, MethodSpec, PathVar, _escape_path_var
+from connectaip import (
+    Client,
+    MethodSpec,
+    PathVar,
+    _escape_path_var,
+    split_multi_wildcard,
+)
 from google.protobuf import empty_pb2, wrappers_pb2
 
 
@@ -68,3 +74,21 @@ def test_client_keeps_separators_in_rest_of_path_var() -> None:
         "/v1/resources/{name...}", "{name...}", "resources/a b/versions/c d"
     )
     assert got == b"/v1/resources/a%20b/versions/c%20d"
+
+
+@pytest.mark.parametrize(
+    ("val", "want0", "want1"),
+    [
+        ("resources/r1/versions/v1", "r1", "v1"),
+        # The last value must carry the whole remainder, or the name the server
+        # rebuilds from the segments won't match what the caller asked for.
+        ("resources/r1/versions/a/b", "r1", "a/b"),
+        ("resources/r1/versions/a/versions/b", "r1", "a/versions/b"),
+        ("resources/r 1/versions/v 1", "r 1", "v 1"),
+        ("resources/r1", "r1", ""),
+    ],
+)
+def test_split_multi_wildcard(val: str, want0: str, want1: str) -> None:
+    seps = ["/versions/"]
+    assert split_multi_wildcard(val, "resources/", seps, 0) == want0
+    assert split_multi_wildcard(val, "resources/", seps, 1) == want1
